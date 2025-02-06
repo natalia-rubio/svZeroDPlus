@@ -44,7 +44,7 @@ def dirgraph(filepath, output_dir, export_csv):
     base_name = filepath.rsplit('/', 1)[-1]
     output_file = os.path.join(output_dir, os.path.splitext(base_name)[0] + "_directed_graph.dot")
     G = nx.DiGraph(nx.nx_pydot.read_dot(output_file))
-    return results, parameters, G
+    return parameters, G
 
 
 def main():
@@ -79,7 +79,7 @@ def main():
     return dirgraph(args.filepath, args.output_dir, args.export_csv)
 
 if __name__ == '__main__':
-    results, parameters, G = main()
+    parameters, G = main()
 
 # Mapping vessel names to IDs. The block parameters are obtained from the user's input json file. 
 vessel_name_to_vessel_id_map = {}
@@ -211,14 +211,14 @@ def normalize_names(name):
         return bc_realname_to_nodename[name]
     return name
 
-if "pressure_in" in results.columns:
-    # Apply normalization to the entire 'name' column efficiently
-    results['name'] = results['name'].apply(normalize_names)
-    grouped_data = results.groupby('name')
+# if "pressure_in" in results.columns:
+#     # Apply normalization to the entire 'name' column efficiently
+#     results['name'] = results['name'].apply(normalize_names)
+#     grouped_data = results.groupby('name')
 
-else:
-    # Split the name column into data_type, structure, and position
-    results[['data_type', 'structure', 'position']] = results['name'].str.split(':', expand=True)
+# else:
+#     # Split the name column into data_type, structure, and position
+#     results[['data_type', 'structure', 'position']] = results['name'].str.split(':', expand=True)
 
     # Initialize a list to hold structured data
     structured_data_list = []
@@ -386,7 +386,7 @@ app.layout = html.Div([
             'data': [edge_trace, vessel_trace, chamber_trace, valve_trace, junction_trace, bc_trace],
             'layout': go.Layout(
                 title='Network Graph',
-                titlefont_size=30,
+                #titlefont_size=30,
                 title_x=0.5,
                 showlegend=True,
                 hovermode='closest',
