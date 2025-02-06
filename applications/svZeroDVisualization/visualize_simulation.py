@@ -25,12 +25,12 @@ If you want to save the raw svZeroDSolver simulation results, add "export-csv" a
 
 def dirgraph(filepath, output_dir, export_csv):
     solver = pysvzerod.Solver(filepath)
-    solver.run()
-    results = pd.DataFrame(solver.get_full_result())
+    # solver.run()
+    # results = pd.DataFrame(solver.get_full_result())
 
-    if export_csv:
-        results.to_csv('results.csv', sep=',', index=False, encoding='utf-8')
-        print(f"Results exported to results.csv")
+    # if export_csv:
+    #     results.to_csv('results.csv', sep=',', index=False, encoding='utf-8')
+    #     print(f"Results exported to results.csv")
 
     with open(filepath, 'r') as infile:
         parameters = json.load(infile)
