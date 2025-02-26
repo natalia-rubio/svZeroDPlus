@@ -37,6 +37,7 @@ Integrator::Integrator(Model* model, double time_step_size, double rho,
   alpha_f = 1.0 / (1.0 + rho);
   gamma = 0.5 + alpha_m - alpha_f;
   ydot_init_coeff = 1.0 - 1.0 / gamma;
+  //ydot_init_coeff = 1.0 - 0.5 / gamma;
 
   y_coeff = gamma * time_step_size;
   y_coeff_jacobian = alpha_f * y_coeff;
@@ -78,6 +79,7 @@ State Integrator::step(const State& old_state, double time) {
   State new_state = State::Zero(size);
   new_state.ydot += old_state.ydot * ydot_init_coeff;
   new_state.y += old_state.y;
+  //new_state.y += old_state.y + 0.5 * old_state.ydot * time_step_size;
 
   // Determine new time (evaluate terms at generalized mid-point)
   double new_time = time + alpha_f * time_step_size;
@@ -87,7 +89,7 @@ State Integrator::step(const State& old_state, double time) {
 
   // Count total number of step calls
   n_iter++;
-
+  std::cout << "Time:" << time << std::endl;
   // Non-linear Newton-Raphson iterations
   for (size_t i = 0; i < max_iter; i++) {
     // Initiator: Evaluate the iterates at the intermediate time levels
@@ -101,14 +103,23 @@ State Integrator::step(const State& old_state, double time) {
 
     // Evaluate residual
     system.update_residual(y_af, ydot_am);
-
+    
+    std::cout << "Residual: " << system.residual.cwiseAbs().maxCoeff() << std::endl;
     // Check termination criterium
     if (system.residual.cwiseAbs().maxCoeff() < atol) {
+      
       break;
     }
 
     // Abort if maximum number of non-linear iterations is reached
-    else if (i == max_iter - 1) {
+    // else if (i >= max_iter - 20) {
+    //   system.get_cond();
+    // }
+    else if (i == max_iter + 100) {
+      std::cout << "Maximum number of non-linear iterations :" << max_iter << std::endl;
+      std::cout << "time step size: " << time_step_size << std::endl;
+      std::cout << "alpha_f: " << alpha_f << std::endl;
+      std::cout << "atol: " << atol << std::endl;
       throw std::runtime_error(
           "Maximum number of non-linear iterations reached.");
     }
@@ -119,12 +130,48 @@ State Integrator::step(const State& old_state, double time) {
     // Solve system for increment in ydot
     system.solve();
 
+    // Line Search
+    double current_residual = system.residual.cwiseAbs().maxCoeff();
+    double new_residual = current_residual + 1.0;
+    double step_size = 1.0;
+    while (new_residual > current_residual) {
+      DEBUG_MSG("Line search step size: " << step_size << " Residual: " << new_residual);
+      // system_copy = SparseSystem(size);
+      // system_copy.reserve(model);
+      // model->update_constant(system);
+      // model->update_time(system, 0.0);
+
+      State hyp_state = State::Zero(size);
+      hyp_state.y += new_state.y;
+      hyp_state.ydot += new_state.ydot;
+
+      hyp_state.ydot += system.dydot * step_size;
+      hyp_state.y += system.dydot * step_size * y_coeff;
+
+      ydot_am.setZero();
+      y_af.setZero();
+      ydot_am += old_state.ydot + (hyp_state.ydot - old_state.ydot) * alpha_m;
+      y_af += old_state.y + (hyp_state.y - old_state.y) * alpha_f;
+
+      // Update solution-dependent element contribitions
+      model->update_solution(system, y_af, ydot_am);
+
+      // Evaluate residual
+      system.update_residual(y_af, ydot_am);
+      new_residual = system.residual.cwiseAbs().maxCoeff();
+
+      step_size *= 0.5;
+    }
+
+    // End of line search
+
     // Perform post-solve actions on blocks
     model->post_solve(new_state.y);
 
     // Update the solution
-    new_state.ydot += system.dydot;
-    new_state.y += system.dydot * y_coeff;
+    new_state.ydot += system.dydot * step_size;
+    new_state.y += system.dydot * step_size * y_coeff;
+
 
     // Count total number of nonlinear iterations
     n_nonlin_iter++;

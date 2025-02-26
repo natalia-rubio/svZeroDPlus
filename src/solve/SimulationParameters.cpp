@@ -291,6 +291,7 @@ void load_simulation_model(const nlohmann::json& config, Model& model) {
 
   // Finalize model
   model.finalize();
+  
 }
 
 void create_vessels(

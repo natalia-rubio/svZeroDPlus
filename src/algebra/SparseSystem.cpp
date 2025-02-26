@@ -29,7 +29,7 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "SparseSystem.h"
-
+#include <Eigen/SVD>
 #include "Model.h"
 
 SparseSystem::SparseSystem() {}
@@ -88,6 +88,7 @@ void SparseSystem::update_residual(
   residual.setZero();
   residual -= C;
   residual.noalias() -= E * ydot;
+
   residual.noalias() -= F * y;
 }
 
@@ -98,8 +99,44 @@ void SparseSystem::update_jacobian(double time_coeff_ydot,
   jacobian += (F + dC_dy) * time_coeff_y;
 }
 
+// void SparseSystem::hyp_step(){
+//   int n = E.rows();
+//   solver->factorize(jacobian);
+
+//   Eigen::SparseMatrix<double>(n, n) dydot_copy;
+//   dydot_copy.setZero();
+//   dydot += solver->solve(residual);
+//   Eigen::Matrix<double, Eigen::Dynamic, 1>::Zero(n) residual_copy;
+//   new_residual = residual;
+// }
+
+
 void SparseSystem::solve() {
   solver->factorize(jacobian);
+
   dydot.setZero();
   dydot += solver->solve(residual);
+}
+
+void SparseSystem::get_cond(){  
+  DEBUG_MSG("Computing SVD of the Jacobian");
+  Eigen::JacobiSVD<Eigen::MatrixXd> svd(jacobian);
+  
+  double cond = svd.singularValues()(0) 
+    / svd.singularValues()(svd.singularValues().size()-1);
+  
+  std::cout << "Condition number: " << cond << std::endl;
+}
+
+void SparseSystem::write_matrices() {
+  std::basic_ofstream<char> file;
+  std::string filename_E = "E.txt";
+  file.open(filename_E, std::ios::app);
+  file << E << std::endl;
+  file.close();
+
+  std::string filename_F = "F.txt";
+  file.open(filename_F, std::ios::app);
+  file << F << std::endl;
+  file.close();
 }

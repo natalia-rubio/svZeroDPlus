@@ -69,6 +69,7 @@ void BloodVessel::update_solution(
   double dq_in = dy[global_var_ids[1]];
   double stenosis_resistance = stenosis_coeff * fabs(q_in);
 
+
   // Set element contributions
   system.C(global_eqn_ids[0]) = stenosis_resistance * -q_in;
   system.C(global_eqn_ids[1]) = stenosis_resistance * 2.0 * capacitance * dq_in;

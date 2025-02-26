@@ -107,6 +107,7 @@ int main(int argc, char* argv[]) {
 
   auto solver = Solver(config);
   solver.run();
+  
   solver.write_result_to_csv(output_file_name);
 
   return 0;

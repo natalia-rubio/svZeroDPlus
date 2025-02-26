@@ -36,8 +36,10 @@
 
 #include <Eigen/Sparse>
 #include <Eigen/SparseLU>
+#include <Eigen/SVD>
 #include <iostream>
 #include <memory>
+#include <fstream>
 
 // Forward declaration of Model
 class Model;
@@ -120,12 +122,15 @@ class SparseSystem {
    * @brief Solve the system
    */
   void solve();
+  void get_cond();
 
   /**
    * @brief Delete dynamically allocated memory (class member
    * Eigen::SparseLU<Eigen::SparseMatrix> *solver)
    */
   void clean();
+
+  void write_matrices();
 };
 
 #endif  // SVZERODSOLVER_ALGREBRA_SPARSESYSTEM_HPP_

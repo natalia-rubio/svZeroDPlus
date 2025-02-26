@@ -300,11 +300,14 @@ std::string Solver::get_full_result() const {
   std::string output;
 
   if (simparams.output_variable_based) {
+    DEBUG_MSG("Write variabel based output");
+
     output = to_variable_csv(times, states, *this->model.get(),
                              simparams.output_mean_only,
                              simparams.output_derivative);
 
   } else {
+    DEBUG_MSG("Write standard output");
     output =
         to_vessel_csv(times, states, *this->model.get(),
                       simparams.output_mean_only, simparams.output_derivative);
@@ -382,7 +385,9 @@ void Solver::sanity_checks() {
 
 void Solver::write_result_to_csv(const std::string& filename) const {
   DEBUG_MSG("Write output");
+  std::cout << "Writing output to " << filename << std::endl;
   std::ofstream ofs(filename);
+  std::cout << get_full_result();
   ofs << get_full_result();
   ofs.close();
 }

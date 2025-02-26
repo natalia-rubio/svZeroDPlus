@@ -58,7 +58,7 @@ std::string to_vessel_csv(const std::vector<double> &times,
   } else {
     out << "name,time,flow_in,flow_out,pressure_in,pressure_out\n";
   }
-
+  DEBUG_MSG("Wrote column labels");
   // Determine number of time steps
   int num_steps = times.size();
 
@@ -66,7 +66,9 @@ std::string to_vessel_csv(const std::vector<double> &times,
   int outflow_dof;
   int inpres_dof;
   int outpres_dof;
+  DEBUG_MSG("Extracting block data for " << model.get_num_blocks() << " blocks");
   for (size_t i = 0; i < model.get_num_blocks(); i++) {
+    DEBUG_MSG("Extracting block " << i);
     auto block = model.get_block(i);
     // Extract global solution indices of the block
 
@@ -75,6 +77,7 @@ std::string to_vessel_csv(const std::vector<double> &times,
     }
 
     std::string name = block->get_name();
+    DEBUG_MSG("Block name: " << name);
     inflow_dof = block->inlet_nodes[0]->flow_dof;
     outflow_dof = block->outlet_nodes[0]->flow_dof;
     inpres_dof = block->inlet_nodes[0]->pres_dof;
@@ -82,6 +85,7 @@ std::string to_vessel_csv(const std::vector<double> &times,
 
     // Write the solution of the block to the output file
     if (derivative) {
+      DEBUG_MSG("Derivative block");
       if (mean) {
         double inflow_mean = 0.0;
         double outflow_mean = 0.0;
