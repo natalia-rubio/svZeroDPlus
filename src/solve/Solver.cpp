@@ -44,6 +44,7 @@ void Solver::run() {
   if (simparams.sim_steady_initial) {
     DEBUG_MSG("Calculate steady initial condition");
     double time_step_size_steady = this->model->cardiac_cycle_period / 10.0;
+    DEBUG_MSG("Initial steady time step size: " << time_step_size_steady);
     this->model->to_steady();
 
     Integrator integrator_steady(this->model.get(), time_step_size_steady,
@@ -53,6 +54,7 @@ void Solver::run() {
     for (int i = 0; i < 31; i++) {
       state = integrator_steady.step(state, time_step_size_steady * double(i));
     }
+    DEBUG_MSG("Switch to unsteady initial condition");
 
     this->model->to_unsteady();
   }
@@ -104,6 +106,10 @@ void Solver::run() {
     states_last_two_cycles =
         std::vector<State>(num_time_pts_in_two_cycles, state);
   }
+
+  for (int quad_res_fac = 0; quad_res_fac < 1; quad_res_fac += .01)
+  DEBUG_MSG("Running simulation with quad residual factor: " << quad_res_fac);
+  // Time stepping loop
   for (int i = 1; i < simparams.sim_num_time_steps; i++) {
     if (simparams.use_cycle_to_cycle_error) {
       if (i == simparams.sim_num_time_steps - num_time_pts_in_two_cycles + 1) {
@@ -315,6 +321,7 @@ std::string Solver::get_full_result() const {
 
   return output;
 }
+
 
 Eigen::VectorXd Solver::get_single_result(const std::string& dof_name) const {
   int dof_index = this->model->dofhandler.get_variable_index(dof_name);

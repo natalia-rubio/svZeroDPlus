@@ -580,7 +580,8 @@ void create_chambers(
 
 State load_initial_condition(const nlohmann::json& config, Model& model) {
   // Read initial condition
-  auto initial_state = State::Zero(model.dofhandler.size());
+  // auto initial_state = State::Zero(model.dofhandler.size());
+  auto initial_state = State::Value(model.dofhandler.size());
 
   if (config.contains("initial_condition")) {
     const auto& initial_condition = config["initial_condition"];

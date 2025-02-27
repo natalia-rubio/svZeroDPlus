@@ -82,6 +82,8 @@ class State {
    * @return New state initialized with all zeros
    */
   static State Zero(int n);
+
+  static State Value(int n);
 };
 
 #endif  // SVZERODSOLVER_ALGEBRA_STATE_HPP_

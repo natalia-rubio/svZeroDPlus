@@ -66,9 +66,9 @@ std::string to_vessel_csv(const std::vector<double> &times,
   int outflow_dof;
   int inpres_dof;
   int outpres_dof;
-  DEBUG_MSG("Extracting block data for " << model.get_num_blocks() << " blocks");
+  // DEBUG_MSG("Extracting block data for " << model.get_num_blocks() << " blocks");
   for (size_t i = 0; i < model.get_num_blocks(); i++) {
-    DEBUG_MSG("Extracting block " << i);
+    // DEBUG_MSG("Extracting block " << i);
     auto block = model.get_block(i);
     // Extract global solution indices of the block
 
@@ -77,7 +77,7 @@ std::string to_vessel_csv(const std::vector<double> &times,
     }
 
     std::string name = block->get_name();
-    DEBUG_MSG("Block name: " << name);
+    // DEBUG_MSG("Block name: " << name);
     inflow_dof = block->inlet_nodes[0]->flow_dof;
     outflow_dof = block->outlet_nodes[0]->flow_dof;
     inpres_dof = block->inlet_nodes[0]->pres_dof;

@@ -51,3 +51,12 @@ State State::Zero(int n) {
   state.ydot = Eigen::Matrix<double, Eigen::Dynamic, 1>::Zero(n);
   return state;
 }
+
+State State::Value(int n) {
+  // [TODO] what's going on here, returing a static State?
+  static State state(n);
+  state.y = Eigen::Matrix<double, Eigen::Dynamic, 1>::Ones(n)*5;
+  state.ydot = Eigen::Matrix<double, Eigen::Dynamic, 1>::Zero(n);
+  return state;
+}
+
