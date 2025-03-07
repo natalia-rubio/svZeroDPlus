@@ -37,6 +37,7 @@ Integrator::Integrator(Model* model, double time_step_size, double rho,
   alpha_f = 1.0 / (1.0 + rho);
   gamma = 0.5 + alpha_m - alpha_f;
   ydot_init_coeff = 1.0 - 1.0 / gamma;
+  //ydot_init_coeff = 1.0 - 0.5 / gamma;
 
   y_coeff = gamma * time_step_size;
   y_coeff_jacobian = alpha_f * y_coeff;
@@ -77,7 +78,8 @@ State Integrator::step(const State& old_state, double time) {
   // Predictor: Constant y, consistent ydot
   State new_state = State::Zero(size);
   new_state.ydot += old_state.ydot * ydot_init_coeff;
-  new_state.y += old_state.y;
+  //new_state.y += old_state.y;
+  new_state.y += old_state.y + 0.5 * old_state.ydot * time_step_size; //* 0.0;
 
   // Determine new time (evaluate terms at generalized mid-point)
   double new_time = time + alpha_f * time_step_size;
@@ -87,28 +89,40 @@ State Integrator::step(const State& old_state, double time) {
 
   // Count total number of step calls
   n_iter++;
-
+  std::cout << "Time:" << time << std::endl;
   // Non-linear Newton-Raphson iterations
   for (size_t i = 0; i < max_iter; i++) {
     // Initiator: Evaluate the iterates at the intermediate time levels
     ydot_am.setZero();
     y_af.setZero();
-    ydot_am += old_state.ydot + (new_state.ydot - old_state.ydot) * alpha_m;
+    ydot_am += (old_state.ydot + (new_state.ydot - old_state.ydot) * alpha_m);
     y_af += old_state.y + (new_state.y - old_state.y) * alpha_f;
-
+    //std::cout << "ydot_am: " << ydot_am << std::endl;
+    //std::cout << "y_af: " << y_af << std::endl;
     // Update solution-dependent element contribitions
     model->update_solution(system, y_af, ydot_am);
 
     // Evaluate residual
     system.update_residual(y_af, ydot_am);
-
+    
+    // std::cout << "Residual: " << system.residual.cwiseAbs().maxCoeff() << std::endl;
     // Check termination criterium
     if (system.residual.cwiseAbs().maxCoeff() < atol) {
+      std::cout << "Advancing in time with residual " << system.residual.cwiseAbs().maxCoeff() << std::endl;
       break;
     }
 
     // Abort if maximum number of non-linear iterations is reached
+    // else if (i >= max_iter - 20) {
+    //   system.get_cond();
+    // }
     else if (i == max_iter - 1) {
+      std::cout << "Maximum number of non-linear iterations :" << max_iter << std::endl;
+      std::cout << "time step size: " << time_step_size << std::endl;
+      std::cout << "alpha_f: " << alpha_f << std::endl;
+      std::cout << "atol: " << atol << std::endl;
+      std::cout << "y: " << y_af << std::endl;
+      std::cout << "ydot: " << ydot_am << std::endl;
       throw std::runtime_error(
           "Maximum number of non-linear iterations reached.");
     }
@@ -119,12 +133,126 @@ State Integrator::step(const State& old_state, double time) {
     // Solve system for increment in ydot
     system.solve();
 
+
+
+    // Line Search
+    double current_residual = system.residual.cwiseAbs().maxCoeff();
+    double new_residual = current_residual;
+
+    bool use_line_search = false;
+    double step_size = 1.0;
+    double max_num_ls = 20;
+    double num_ls = 0;
+    double num_restarts = 0;
+
+    while (new_residual >= current_residual) {
+      
+
+      State hyp_state = State::Zero(size);
+      hyp_state.y += new_state.y;
+      hyp_state.ydot += new_state.ydot;
+
+      if (num_ls == 20) {
+        // std::cout << "dydot" << system.dydot << std::endl;
+        step_size = -1;
+      }
+
+      hyp_state.ydot += system.dydot * step_size;
+      hyp_state.y += system.dydot * step_size * y_coeff;
+
+      // bool neg_y = (hyp_state.y.array() < 0.0).any();
+      // if (neg_y) {
+      //   std::cout << "Negative y.  Flipping" << std::endl;
+      //   hyp_state.ydot = (hyp_state.y.array() < 0).select(0, hyp_state.ydot);
+      //   hyp_state.y = (hyp_state.y.array() < 0).select(100, hyp_state.y);
+        
+      // //throw std::runtime_error("Negative y");
+      // }
+
+      ydot_am.setZero();
+      y_af.setZero();
+      ydot_am += (old_state.ydot + (hyp_state.ydot - old_state.ydot) * alpha_m);
+      y_af += old_state.y + (hyp_state.y - old_state.y) * alpha_f;
+
+      // Update solution-dependent element contribitions
+      model->update_solution(system, y_af, ydot_am);
+
+      // Evaluate residual
+      system.update_residual(y_af, ydot_am);
+      system.update_jacobian(alpha_m, y_coeff_jacobian);
+      
+
+      
+
+      new_residual = system.residual.cwiseAbs().maxCoeff();
+      DEBUG_MSG("Step size: " << step_size << " Residual: " << new_residual);
+      if (use_line_search == true){
+          step_size *= 0.5;
+          num_ls += 1;
+      } else {
+
+          break;
+      }
+
+
+      
+      // Newton's method stuck in local minimum.  Randomize solution and restart
+      
+      if (num_ls == max_num_ls * 2) {
+        if (num_restarts == 0) {
+          throw std::runtime_error("Newton's method stuck in local minimum. Randomization failed.");
+        }
+        double min_range = 0.0;
+        double max_range = 1;
+        num_restarts += 1;
+        Eigen::MatrixXd rand = Eigen::MatrixXd::Random(old_state.y.rows(),1);
+        rand = (rand + Eigen::MatrixXd::Constant(old_state.y.rows(),1,1.0)) / 2.0;
+
+        State old_state = State::Zero(size);
+        old_state.y += rand * (max_range - min_range) + Eigen::MatrixXd::Constant(old_state.y.rows(),1,min_range);
+        old_state.ydot += old_state.ydot * 0;
+
+        State new_state = State::Zero(size);
+        new_state.ydot += old_state.ydot * ydot_init_coeff;
+        new_state.y += old_state.y + 0.5 * old_state.ydot * time_step_size;
+
+        ydot_am.setZero();
+        y_af.setZero();
+        ydot_am += (old_state.ydot + (new_state.ydot - old_state.ydot) * alpha_m);
+        y_af += old_state.y + (new_state.y - old_state.y) * alpha_f;
+          
+        model->update_solution(system, y_af, ydot_am);
+        system.update_residual(y_af, ydot_am);
+        system.solve();
+
+        // Reset line search
+        current_residual = system.residual.cwiseAbs().maxCoeff();
+        new_residual = system.residual.cwiseAbs().maxCoeff();
+        step_size = 1.0;
+        num_ls = 0;
+        DEBUG_MSG("Randomized solution, restarting Newton's method");
+
+        
+      }
+
+    }
+    new_state.ydot += system.dydot * step_size;
+    new_state.y += system.dydot * step_size * y_coeff;
+
+    // End of line search
+
     // Perform post-solve actions on blocks
     model->post_solve(new_state.y);
 
     // Update the solution
-    new_state.ydot += system.dydot;
-    new_state.y += system.dydot * y_coeff;
+    new_state.ydot += system.dydot * step_size;
+
+    new_state.y += system.dydot * step_size * y_coeff;
+    bool neg_y = (new_state.y.array() < 0.0).any();
+    if (neg_y) {
+      std::cout << "Negative y " << std::endl;
+      //throw std::runtime_error("Negative y");
+    }
 
     // Count total number of nonlinear iterations
     n_nonlin_iter++;

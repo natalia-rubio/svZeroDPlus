@@ -96,6 +96,7 @@ void SparseSystem::update_jacobian(double time_coeff_ydot,
   jacobian.setZero();
   jacobian += (E + dC_dydot) * time_coeff_ydot;
   jacobian += (F + dC_dy) * time_coeff_y;
+
 }
 
 void SparseSystem::solve() {

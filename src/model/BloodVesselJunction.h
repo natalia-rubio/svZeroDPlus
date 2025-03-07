@@ -157,7 +157,8 @@ class BloodVesselJunction : public Block {
       : Block(id, model, BlockType::blood_vessel_junction, BlockClass::junction,
               {{"R_poiseuille", InputParameter()},
                {"L", InputParameter()},
-               {"stenosis_coefficient", InputParameter()}}) {
+               {"stenosis_coefficient", InputParameter()},
+               {"pressure_recovery_coefficient", InputParameter()}}) {
     input_params_list = true;
   }
 

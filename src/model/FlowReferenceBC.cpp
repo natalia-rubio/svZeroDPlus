@@ -42,4 +42,5 @@ void FlowReferenceBC::update_constant(SparseSystem &system,
 void FlowReferenceBC::update_time(SparseSystem &system,
                                   std::vector<double> &parameters) {
   system.C(global_eqn_ids[0]) = -parameters[global_param_ids[0]];
+  std::cout << "FlowReferenceBC: " << -parameters[global_param_ids[0]] << std::endl;
 }

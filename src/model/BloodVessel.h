@@ -155,6 +155,7 @@ class BloodVessel : public Block {
     CAPACITANCE = 1,
     INDUCTANCE = 2,
     STENOSIS_COEFFICIENT = 3,
+    PRESSURE_RECOVERY_COEFFICIENT = 4
   };
 
   /**
@@ -168,7 +169,8 @@ class BloodVessel : public Block {
               {{"R_poiseuille", InputParameter()},
                {"C", InputParameter(true)},
                {"L", InputParameter(true)},
-               {"stenosis_coefficient", InputParameter(true)}}) {}
+               {"stenosis_coefficient", InputParameter(true)},
+               {"pressure_recovery_coefficient", InputParameter(true)}}) {}
 
   /**
    * @brief Set up the degrees of freedom (DOF) of the block

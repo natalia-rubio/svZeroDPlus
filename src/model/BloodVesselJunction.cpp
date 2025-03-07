@@ -69,13 +69,17 @@ void BloodVesselJunction::update_solution(
   for (size_t i = 0; i < num_outlets; i++) {
     // Get parameters
     auto stenosis_coeff = parameters[global_param_ids[2 * num_outlets + i]];
+    auto pressure_recovery_coeff =
+        parameters[global_param_ids[3 * num_outlets + i]]; // NOT SURE HOW THIS WORKS...CHECK
+
     auto q_out = y[global_var_ids[3 + 2 * i]];
     auto stenosis_resistance = stenosis_coeff * fabs(q_out);
+    auto pressure_recovery_resistance = pressure_recovery_coeff * q_out;
 
     // Mass conservation
-    system.C(global_eqn_ids[i + 1]) = -stenosis_resistance * q_out;
+    system.C(global_eqn_ids[i + 1]) = -stenosis_resistance * q_out - pressure_recovery_resistance * q_out;
     system.dC_dy.coeffRef(global_eqn_ids[i + 1], global_var_ids[3 + 2 * i]) =
-        -2.0 * stenosis_resistance;
+        -2.0 * stenosis_resistance + -2.0 * pressure_recovery_resistance;
   }
 }
 
@@ -96,10 +100,18 @@ void BloodVesselJunction::update_gradient(
     if (global_param_ids.size() / num_outlets > 2) {
       stenosis_coeff = alpha[global_param_ids[2 * num_outlets + i]];
     }
+
+    // AGAIN NOT SURE HOW THIS WORKS...CHECK
+    double pressure_recovery_coeff = 0.0;
+    if (global_param_ids.size() / num_outlets > 3) {
+      pressure_recovery_coeff = alpha[global_param_ids[3 * num_outlets + i]];
+    }
+
     auto q_out = y[global_var_ids[3 + 2 * i]];
     auto p_out = y[global_var_ids[2 + 2 * i]];
     auto dq_out = dy[global_var_ids[3 + 2 * i]];
     auto stenosis_resistance = stenosis_coeff * fabs(q_out);
+    auto pressure_recovery_resistance = pressure_recovery_coeff * q_out;
 
     // Resistance
     jacobian.coeffRef(global_eqn_ids[i + 1], global_param_ids[i]) = -q_out;
@@ -115,9 +127,16 @@ void BloodVesselJunction::update_gradient(
           -fabs(q_out) * q_out;
     }
 
+    // Pressure Recovery Coefficient
+    if (global_param_ids.size() / num_outlets > 3) {
+      jacobian.coeffRef(global_eqn_ids[i + 1],
+                        global_param_ids[3 * num_outlets + i]) = 
+                        -q_out * q_out;
+    }
+
     residual(global_eqn_ids[0]) -= q_out;
     residual(global_eqn_ids[i + 1]) =
-        p_in - p_out - (resistance + stenosis_resistance) * q_out -
+        p_in - p_out - (resistance + stenosis_resistance + pressure_recovery_resistance) * q_out -
         inductance * dq_out;
   }
 }
