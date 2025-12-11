@@ -44,6 +44,8 @@ EXPECTED_FAILURES = {
                                       'steadyFlow_R_coronary.json', 
                                       'steadyFlow_RLC_R.json', 
                                       'steadyFlow_blood_vessel_junction.json', 
+                                      'steadyFlow_dir_dep_junction.json',
+                                      'sinusoidalFlow_dir_indep_junction.json',
                                       'valve_tanh.json', 
                                       'pulsatileFlow_bifurcationR_RCR_cycle_error.json', 
                                       'pulsatileFlow_R_RCR_mean_derivative_variable.json',
