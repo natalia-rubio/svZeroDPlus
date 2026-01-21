@@ -2,29 +2,43 @@
 // University of California, and others. SPDX-License-Identifier: BSD-3-Clause
 
 #include "Integrator.h"
+#include "../solve/debug.h"
 
 Integrator::Integrator(Model* model, double time_step_size, double rho,
                        double atol, int max_iter) {
+  DEBUG_MSG("[Integrator] Starting constructor");
   this->model = model;
+  DEBUG_MSG("[Integrator] Model pointer set");
   alpha_m = 0.5 * (3.0 - rho) / (1.0 + rho);
   alpha_f = 1.0 / (1.0 + rho);
   gamma = 0.5 + alpha_m - alpha_f;
   ydot_init_coeff = 1.0 - 1.0 / gamma;
+  DEBUG_MSG("[Integrator] Alpha parameters calculated");
 
   y_coeff = gamma * time_step_size;
   y_coeff_jacobian = alpha_f * y_coeff;
+  DEBUG_MSG("[Integrator] Coefficients calculated");
 
+  DEBUG_MSG("[Integrator] Getting DOF size from model...");
   size = model->dofhandler.size();
+  DEBUG_MSG("[Integrator] DOF size: " << size);
+  DEBUG_MSG("[Integrator] Creating SparseSystem...");
   system = SparseSystem(size);
+  DEBUG_MSG("[Integrator] SparseSystem created");
   this->time_step_size = time_step_size;
   this->atol = atol;
   this->max_iter = max_iter;
 
+  DEBUG_MSG("[Integrator] Creating state vectors...");
   y_af = Eigen::Matrix<double, Eigen::Dynamic, 1>(size);
   ydot_am = Eigen::Matrix<double, Eigen::Dynamic, 1>(size);
+  DEBUG_MSG("[Integrator] State vectors created");
 
   // Make some memory reservations
+  DEBUG_MSG("[Integrator] Calling system.reserve(model)...");
   system.reserve(model);
+  DEBUG_MSG("[Integrator] system.reserve() completed");
+  DEBUG_MSG("[Integrator] Constructor completed successfully");
 }
 
 // Must declare default constructord and dedtructor

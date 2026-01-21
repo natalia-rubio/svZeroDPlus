@@ -2,6 +2,8 @@
 // University of California, and others. SPDX-License-Identifier: BSD-3-Clause
 #include "calibrate.h"
 
+#include <limits>
+
 #include "LevenbergMarquardtOptimizer.h"
 #include "SimulationParameters.h"
 
@@ -118,30 +120,65 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   std::vector<std::vector<double>> dy_all;
   auto y_values = config["y"];
   auto dy_values = config["dy"];
+  
+  // Determine num_obs from first available observation
+  for (auto& [key, val] : y_values.items()) {
+    num_obs = val.get<std::vector<double>>().size();
+    break;
+  }
+  if (num_obs == 0) {
+    std::cout << "ERROR: No observations found in 'y'" << std::endl;
+    exit(1);
+  }
+  
+  // Initialize observation vectors
+  y_all.resize(num_obs);
+  dy_all.resize(num_obs);
+  
+  const double NaN_VALUE = std::numeric_limits<double>::quiet_NaN();
+  int missing_count = 0;
+  
   for (size_t i = 0; i < model.dofhandler.get_num_variables(); i++) {
     std::string var_name = model.dofhandler.variables[i];
     DEBUG_MSG("Reading observations for variable " << var_name);
-    if (!y_values.contains(var_name)) {
-      std::cout << "ERROR: Missing y observation for '" << var_name << "'"
-                << std::endl;
-      exit(1);
+    
+    if (y_values.contains(var_name) && dy_values.contains(var_name)) {
+      auto y_array = y_values[var_name].get<std::vector<double>>();
+      auto dy_array = dy_values[var_name].get<std::vector<double>>();
+      
+      if (y_array.size() != num_obs || dy_array.size() != num_obs) {
+        std::cout << "WARNING: Observation size mismatch for '" << var_name 
+                  << "'. Expected " << num_obs << " points, got y:" 
+                  << y_array.size() << " dy:" << dy_array.size() << std::endl;
+      }
+      
+      for (size_t j = 0; j < num_obs; j++) {
+        if (j < y_array.size()) {
+          y_all[j].push_back(y_array[j]);
+        } else {
+          y_all[j].push_back(NaN_VALUE);
+        }
+        if (j < dy_array.size()) {
+          dy_all[j].push_back(dy_array[j]);
+        } else {
+          dy_all[j].push_back(NaN_VALUE);
+        }
+      }
+    } else {
+      // Missing observation - fill with NaN
+      missing_count++;
+      std::cout << "WARNING: Missing observation for '" << var_name 
+                << "'. Using NaN placeholder." << std::endl;
+      for (size_t j = 0; j < num_obs; j++) {
+        y_all[j].push_back(NaN_VALUE);
+        dy_all[j].push_back(NaN_VALUE);
+      }
     }
-    if (!dy_values.contains(var_name)) {
-      std::cout << "ERROR: Missing dy observation for '" << var_name << "'"
-                << std::endl;
-      exit(1);
-    }
-    auto y_array = y_values[var_name].get<std::vector<double>>();
-    auto dy_array = dy_values[var_name].get<std::vector<double>>();
-    num_obs = y_array.size();
-    if (i == 0) {
-      y_all.resize(num_obs);
-      dy_all.resize(num_obs);
-    }
-    for (size_t j = 0; j < num_obs; j++) {
-      y_all[j].push_back(y_array[j]);
-      dy_all[j].push_back(dy_array[j]);
-    }
+  }
+  
+  if (missing_count > 0) {
+    std::cout << "INFO: " << missing_count << " variable(s) missing observations. "
+              << "Residual computation will skip these variables." << std::endl;
   }
   DEBUG_MSG("Number of observations: " << num_obs);
 
@@ -221,10 +258,18 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     if (!zero_capacitance) {
       c_value = alpha[block->global_param_ids[1]];
     }
+
+    // if C or L are being set to zero, print a warning
+    if (c_value < 0.0) {
+      std::cout << "WARNING: C was" << c_value << " and is being set to zero for vessel " << vessel_name << std::endl;
+    }
+    if (alpha[block->global_param_ids[2]] < 0.0) {
+      std::cout << "WARNING: L was" << alpha[block->global_param_ids[2]] << " and is being set to zero for vessel " << vessel_name << std::endl;
+    }
     vessel_config["zero_d_element_values"] = {
         {"R_poiseuille", alpha[block->global_param_ids[0]]},
-        {"C", std::max(c_value, 0.0)},
-        {"L", std::max(alpha[block->global_param_ids[2]], 0.0)},
+        {"C", c_value}, //std::max(c_value, 0.0)},
+        {"L",alpha[block->global_param_ids[2]]}, //std::max(alpha[block->global_param_ids[2]], 0.0)},
         {"stenosis_coefficient", stenosis_coeff}};
   }
   for (auto& junction_config : output_config["junctions"]) {

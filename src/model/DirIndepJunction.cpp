@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) Stanford University, The Regents of the
 // University of California, and others. SPDX-License-Identifier: BSD-3-Clause
 
+#include <cmath>
+
 #include "DirIndepJunction.h"
 
 void DirIndepJunction::setup_dofs(DOFHandler& dofhandler) {
@@ -59,6 +61,11 @@ void DirIndepJunction::update_gradient(
     std::vector<double>& dy) {
   auto p_in = y[global_var_ids[0]];
   auto q_in = y[global_var_ids[1]];
+  
+  // Skip if inlet observations are missing
+  if (std::isnan(p_in) || std::isnan(q_in)) {
+    return;
+  }
 
   residual(global_eqn_ids[0]) = q_in;
   for (size_t i = 0; i < num_outlets; i++) {
@@ -72,6 +79,12 @@ void DirIndepJunction::update_gradient(
     auto q_out = y[global_var_ids[3 + 2 * i]];
     auto p_out = y[global_var_ids[2 + 2 * i]];
     auto dq_out = dy[global_var_ids[3 + 2 * i]];
+    
+    // Skip this outlet if observations are missing
+    if (std::isnan(q_out) || std::isnan(p_out) || std::isnan(dq_out)) {
+      continue;
+    }
+    
     auto pressure_recovery_resistance = pressure_recovery_coeff * q_out;
 
     // Resistance

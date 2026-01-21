@@ -12,6 +12,7 @@ Solver::Solver(const nlohmann::json& config) {
   DEBUG_MSG("Load model");
   this->model = std::shared_ptr<Model>(new Model());
   load_simulation_model(config, *this->model.get());
+  DEBUG_MSG("Model loaded");
 
   // If period isn't specified anywhere, set to 1
   if (simparams.sim_cardiac_period < 0 &&
@@ -85,27 +86,38 @@ void Solver::setup_initial() {
 void Solver::setup_integrator() {
   // Set-up integrator
   DEBUG_MSG("Setup time integration");
+  DEBUG_MSG("  Creating Integrator with parameters:");
+  DEBUG_MSG("    time_step_size: " << simparams.sim_time_step_size);
+  DEBUG_MSG("    rho_infty: " << simparams.sim_rho_infty);
+  DEBUG_MSG("    atol: " << simparams.sim_abs_tol);
+  DEBUG_MSG("    max_iter: " << simparams.sim_nliter);
+  DEBUG_MSG("    model DOF size: " << this->model->dofhandler.size());
+  DEBUG_MSG("  About to construct Integrator...");
   integrator = Integrator(this->model.get(), simparams.sim_time_step_size,
                           simparams.sim_rho_infty, simparams.sim_abs_tol,
                           simparams.sim_nliter);
+  DEBUG_MSG("  Integrator constructed successfully");
 
   // Initialize loop
   states = std::vector<State>();
   times = std::vector<double>();
 
   if (simparams.output_all_cycles) {
+    DEBUG_MSG("Outputting all cycles");
     int num_states =
         simparams.sim_num_time_steps / simparams.output_interval + 1;
     states.reserve(num_states);
     times.reserve(num_states);
 
   } else {
+    DEBUG_MSG("Outputting last cycle");
     int num_states =
         simparams.sim_pts_per_cycle / simparams.output_interval + 1;
     states.reserve(num_states);
     times.reserve(num_states);
   }
   time = 0.0;
+  DEBUG_MSG("Finished setting up time integration");
 }
 
 void Solver::run_integration() {

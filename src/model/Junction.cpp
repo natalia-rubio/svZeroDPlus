@@ -1,5 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) Stanford University, The Regents of the
 // University of California, and others. SPDX-License-Identifier: BSD-3-Clause
+
+#include <cmath>
+
 #include "Junction.h"
 
 void Junction::setup_dofs(DOFHandler& dofhandler) {
@@ -37,8 +40,19 @@ void Junction::update_gradient(
     Eigen::Matrix<double, Eigen::Dynamic, 1>& residual,
     Eigen::Matrix<double, Eigen::Dynamic, 1>& alpha, std::vector<double>& y,
     std::vector<double>& dy) {
+  // Check if all required observations are available (not NaN)
+  auto y0 = y[global_var_ids[0]];
+  auto y1 = y[global_var_ids[1]];
+  auto y2 = y[global_var_ids[2]];
+  auto y3 = y[global_var_ids[3]];
+  
+  // Skip residual computation if any required observation is missing (NaN)
+  if (std::isnan(y0) || std::isnan(y1) || std::isnan(y2) || std::isnan(y3)) {
+    return;
+  }
+  
   // Pressure conservation
-  residual(global_eqn_ids[0]) = y[global_var_ids[0]] - y[global_var_ids[2]];
+  residual(global_eqn_ids[0]) = y0 - y2;
 
-  residual(global_eqn_ids[1]) = y[global_var_ids[1]] - y[global_var_ids[3]];
+  residual(global_eqn_ids[1]) = y1 - y3;
 }

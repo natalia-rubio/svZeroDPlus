@@ -43,7 +43,7 @@ Eigen::Matrix<double, Eigen::Dynamic, 1> LevenbergMarquardtOptimizer::run(
     double norm_inc = delta.norm();
     std::cout << std::setprecision(1) << std::scientific << "Iteration "
               << i + 1 << " | lambda: " << lambda << " | norm inc: " << norm_inc
-              << " | norm grad: " << norm_grad << std::endl;
+              << " | norm grad: " << norm_grad << " | norm residual: " << residual.norm() << std::endl;
     if ((norm_grad < tol_grad) && (norm_inc < tol_inc)) {
       break;
     }

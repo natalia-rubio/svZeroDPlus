@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) Stanford University, The Regents of the
 // University of California, and others. SPDX-License-Identifier: BSD-3-Clause
 
+#include <cmath>
+
 #include "BloodVessel.h"
 
 void BloodVessel::setup_dofs(DOFHandler& dofhandler) {
@@ -61,6 +63,7 @@ void BloodVessel::update_gradient(
     Eigen::Matrix<double, Eigen::Dynamic, 1>& residual,
     Eigen::Matrix<double, Eigen::Dynamic, 1>& alpha, std::vector<double>& y,
     std::vector<double>& dy) {
+  // Check if all required observations are available (not NaN)
   auto y0 = y[global_var_ids[0]];
   auto y1 = y[global_var_ids[1]];
   auto y2 = y[global_var_ids[2]];
@@ -69,6 +72,12 @@ void BloodVessel::update_gradient(
   auto dy0 = dy[global_var_ids[0]];
   auto dy1 = dy[global_var_ids[1]];
   auto dy3 = dy[global_var_ids[3]];
+  
+  // Skip residual computation if any required observation is missing (NaN)
+  if (std::isnan(y0) || std::isnan(y1) || std::isnan(y2) || std::isnan(y3) ||
+      std::isnan(dy0) || std::isnan(dy1) || std::isnan(dy3)) {
+    return;
+  }
 
   auto resistance = alpha[global_param_ids[ParamId::RESISTANCE]];
   auto capacitance = alpha[global_param_ids[ParamId::CAPACITANCE]];

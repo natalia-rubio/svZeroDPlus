@@ -190,9 +190,39 @@ int Model::get_num_blocks(bool internal) const {
 }
 
 void Model::update_constant(SparseSystem& system) {
+  DEBUG_MSG("[Model::update_constant] Starting, number of blocks: " << blocks.size());
+  DEBUG_MSG("[Model::update_constant] parameter_values size: " << parameter_values.size());
+  int block_idx = 0;
   for (auto block : blocks) {
-    block->update_constant(system, parameter_values);
+    DEBUG_MSG("[Model::update_constant] Processing block " << block_idx << " of " << blocks.size());
+    if (block == nullptr) {
+      DEBUG_MSG("[Model::update_constant] ERROR: Block " << block_idx << " is nullptr!");
+      continue;
+    }
+    if (block_idx < block_names.size()) {
+      DEBUG_MSG("[Model::update_constant] Block name: " << block_names[block_idx]);
+    } else {
+      DEBUG_MSG("[Model::update_constant] Block name: (not available, block_names size=" << block_names.size() << ")");
+    }
+    if (block_idx < block_types.size()) {
+      DEBUG_MSG("[Model::update_constant] Block type: " << static_cast<int>(block_types[block_idx]));
+    } else {
+      DEBUG_MSG("[Model::update_constant] Block type: (not available, block_types size=" << block_types.size() << ")");
+    }
+    DEBUG_MSG("[Model::update_constant] About to call block->update_constant...");
+    try {
+      block->update_constant(system, parameter_values);
+      DEBUG_MSG("[Model::update_constant] Block " << block_idx << " update_constant completed");
+    } catch (const std::exception& e) {
+      DEBUG_MSG("[Model::update_constant] ERROR: Exception in block " << block_idx << ": " << e.what());
+      throw;
+    } catch (...) {
+      DEBUG_MSG("[Model::update_constant] ERROR: Unknown exception in block " << block_idx);
+      throw;
+    }
+    block_idx++;
   }
+  DEBUG_MSG("[Model::update_constant] All blocks processed successfully");
 }
 
 void Model::update_time(SparseSystem& system, double time) {
