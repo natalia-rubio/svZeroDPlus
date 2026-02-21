@@ -8,6 +8,7 @@ set(lib svzero_model_library)
 set(CXXSRCS 
   Block.cpp
   BloodVessel.cpp
+  BloodVesselFC.cpp
   BloodVesselJunction.cpp
   DirDepJunction.cpp
   DirIndepJunction.cpp
@@ -37,6 +38,7 @@ set(HDRS
   Block.h
   BlockType.h
   BloodVessel.h
+  BloodVesselFC.h
   BloodVesselJunction.h
   DirDepJunction.h
   DirIndepJunction.h

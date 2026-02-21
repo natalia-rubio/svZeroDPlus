@@ -3,6 +3,7 @@
 #include "calibrate.h"
 
 #include <limits>
+#include <map>
 
 #include "LevenbergMarquardtOptimizer.h"
 #include "SimulationParameters.h"
@@ -22,7 +23,21 @@ nlohmann::json calibrate(const nlohmann::json& config) {
       calibration_parameters.value("calibrate_stenosis_coefficient", true);
   bool zero_capacitance =
       calibration_parameters.value("set_capacitance_to_zero", false);
+  bool calibrate_capacitance =
+      calibration_parameters.value("calibrate_capacitance", false);
   double lambda0 = calibration_parameters.value("initial_damping_factor", 1.0);
+  
+  // Store initial capacitance values (to restore if not calibrating capacitance)
+  std::map<std::string, double> initial_capacitance;
+  
+  // Print capacitance calibration status
+  if (zero_capacitance) {
+    std::cout << "Capacitance: Setting all to zero" << std::endl;
+  } else if (!calibrate_capacitance) {
+    std::cout << "Capacitance: Using BloodVesselFC blocks (fixed capacitance, not in optimization)" << std::endl;
+  } else {
+    std::cout << "Capacitance: Including in optimization (BloodVessel blocks)" << std::endl;
+  }
 
   int num_params = 3;
   if (calibrate_stenosis) {
@@ -39,15 +54,49 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   DEBUG_MSG("Load vessels");
   std::map<std::int64_t, std::string> vessel_id_map;
   int param_counter = 0;
+  std::vector<int> fixed_param_ids;
+  
+  // Determine number of optimization parameters per vessel
+  // BloodVessel: R, C, L, [stenosis] -> 3 or 4 params
+  // BloodVesselFC: R, L, [stenosis] -> 2 or 3 params (no C)
+  int num_vessel_params = num_params;
+  if (!calibrate_capacitance && !zero_capacitance) {
+    num_vessel_params = num_params - 1;  // Skip capacitance parameter
+  }
+  
   for (auto const& vessel_config : config["vessels"]) {
     std::string vessel_name = vessel_config["vessel_name"];
 
+    // Read capacitance from config and store if using fixed capacitance
+    if (!calibrate_capacitance && !zero_capacitance) {
+      double cap_value = vessel_config["zero_d_element_values"]["C"].get<double>();
+      model.fixed_capacitance[vessel_name] = cap_value;
+      initial_capacitance[vessel_name] = cap_value;
+    }
+
+    bool is_connector = (vessel_name.find("connector") != std::string::npos);
+
     // Create parameter IDs
     std::vector<int> param_ids;
-    for (size_t k = 0; k < num_params; k++)
-      param_ids.push_back(param_counter++);
-    std::string block_type =
-        vessel_config["zero_d_element_type"].get<std::string>();
+    for (size_t k = 0; k < num_vessel_params; k++) {
+      int param_id = param_counter++;
+      param_ids.push_back(param_id);
+      if (is_connector) {
+        fixed_param_ids.push_back(param_id);
+      }
+    }
+    if (is_connector) {
+      std::cout << "Fixing vessel params for connector: " << vessel_name << std::endl;
+    }
+    
+    // Choose block type: BloodVesselFC for fixed capacitance, otherwise original
+    std::string block_type;
+    if (!calibrate_capacitance && !zero_capacitance) {
+      block_type = "BloodVesselFC";
+    } else {
+      block_type = vessel_config["zero_d_element_type"].get<std::string>();
+    }
+    
     model.add_block(block_type, param_ids, vessel_name);
     vessel_id_map.insert({vessel_config["vessel_id"], vessel_name});
     DEBUG_MSG("Created vessel " << vessel_name);
@@ -65,19 +114,46 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   }
 
   // Create junctions
+  int num_junc_params_per_outlet = num_params - 1;  // R, L, stenosis (no C)
   for (auto const& junction_config : config["junctions"]) {
     std::string junction_name = junction_config["junction_name"];
     auto const& outlet_vessels = junction_config["outlet_vessels"];
     int num_outlets = outlet_vessels.size();
+    
+    // Read junction type from input (default to NORMAL_JUNCTION)
+    std::string junction_type = junction_config.value("junction_type", "NORMAL_JUNCTION");
 
     if (num_outlets == 1) {
+      // Single outlet junctions are always NORMAL_JUNCTION
       model.add_block("NORMAL_JUNCTION", {}, junction_name);
-
+    } else if (junction_type == "NORMAL_JUNCTION") {
+      // Multi-outlet NORMAL_JUNCTION: no parameters to calibrate
+      model.add_block("NORMAL_JUNCTION", {}, junction_name);
     } else {
+      // Multi-outlet BloodVesselJunction (or other types): has R, L, stenosis parameters
+      int junc_param_start = param_counter;
       std::vector<int> param_ids;
-      for (size_t i = 0; i < (num_outlets * (num_params - 1)); i++)
+      for (size_t i = 0; i < (num_outlets * num_junc_params_per_outlet); i++)
         param_ids.push_back(param_counter++);
       model.add_block("BloodVesselJunction", param_ids, junction_name);
+
+      // Fix junction params for outlets connected to non-EL connector vessels.
+      // Parameter layout: [R_0..R_{n-1}, L_0..L_{n-1}, S_0..S_{n-1}]
+      for (int oi = 0; oi < num_outlets; oi++) {
+        int64_t ov_id = outlet_vessels[oi].get<int64_t>();
+        std::string ov_name = vessel_id_map[ov_id];
+        bool is_connector = (ov_name.find("connector") != std::string::npos);
+        bool is_el_connector = (ov_name.find("connectorEL") != std::string::npos);
+        if (is_connector && !is_el_connector) {
+          fixed_param_ids.push_back(junc_param_start + oi);                      // R
+          fixed_param_ids.push_back(junc_param_start + num_outlets + oi);        // L
+          if (num_params > 3) {
+            fixed_param_ids.push_back(junc_param_start + 2 * num_outlets + oi);  // stenosis
+          }
+          std::cout << "Fixing junction " << junction_name
+                    << " outlet params for non-EL connector: " << ov_name << std::endl;
+        }
+      }
     }
 
     // Check for connections to inlet and outlet vessels and append to
@@ -89,7 +165,7 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     for (auto vessel_id : outlet_vessels) {
       connections.push_back({junction_name, vessel_id_map[vessel_id]});
     }
-    DEBUG_MSG("Created junction " << junction_name);
+    DEBUG_MSG("Created junction " << junction_name << " (" << junction_type << ")");
   }
 
   // Create Connections
@@ -190,16 +266,31 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     std::string vessel_name = vessel_config["vessel_name"];
     DEBUG_MSG("Reading initial alpha for " << vessel_name);
     auto block = model.get_block(vessel_name);
-    alpha[block->global_param_ids[0]] =
-        vessel_config["zero_d_element_values"].value("R_poiseuille", 0.0);
-    alpha[block->global_param_ids[1]] =
-        vessel_config["zero_d_element_values"].value("C", 0.0);
-    alpha[block->global_param_ids[2]] =
-        vessel_config["zero_d_element_values"].value("L", 0.0);
-    if (num_params > 3) {
-      alpha[block->global_param_ids[3]] =
-          vessel_config["zero_d_element_values"].value("stenosis_coefficient",
-                                                       0.0);
+    
+    if (!calibrate_capacitance && !zero_capacitance) {
+      // BloodVesselFC: params are R(0), L(1), stenosis(2)
+      alpha[block->global_param_ids[0]] =
+          vessel_config["zero_d_element_values"].value("R_poiseuille", 0.0);
+      alpha[block->global_param_ids[1]] =
+          vessel_config["zero_d_element_values"].value("L", 0.0);
+      if (calibrate_stenosis) {
+        alpha[block->global_param_ids[2]] =
+            vessel_config["zero_d_element_values"].value("stenosis_coefficient", 0.0);
+      }
+    } else {
+      // BloodVessel: params are R(0), C(1), L(2), stenosis(3)
+      alpha[block->global_param_ids[0]] =
+          vessel_config["zero_d_element_values"].value("R_poiseuille", 0.0);
+      double c_init = vessel_config["zero_d_element_values"].value("C", 0.0);
+      alpha[block->global_param_ids[1]] = c_init;
+      // Store initial capacitance for later restoration if not calibrating
+      initial_capacitance[vessel_name] = c_init;
+      alpha[block->global_param_ids[2]] =
+          vessel_config["zero_d_element_values"].value("L", 0.0);
+      if (num_params > 3) {
+        alpha[block->global_param_ids[3]] =
+            vessel_config["zero_d_element_values"].value("stenosis_coefficient", 0.0);
+      }
     }
   }
   for (auto& junction_config : output_config["junctions"]) {
@@ -211,7 +302,13 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     if (num_outlets < 2) {
       continue;
     }
+    
+    // Skip junctions without parameters (e.g., NORMAL_JUNCTION)
+    if (block->global_param_ids.empty()) {
+      continue;
+    }
 
+    // Initialize junction parameters to zero
     for (size_t i = 0; i < num_outlets; i++) {
       alpha[block->global_param_ids[i]] = 0.0;
       alpha[block->global_param_ids[i + num_outlets]] = 0.0;
@@ -219,7 +316,11 @@ nlohmann::json calibrate(const nlohmann::json& config) {
         alpha[block->global_param_ids[i + 2 * num_outlets]] = 0.0;
       }
     }
-    if (junction_config["junction_type"] == "BloodVesselJunction") {
+    
+    // Read initial values from BloodVesselJunction if available
+    if (junction_config.contains("junction_type") && 
+        junction_config["junction_type"] == "BloodVesselJunction" &&
+        junction_config.contains("junction_values")) {
       auto resistance = junction_config["junction_values"]["R_poiseuille"]
                             .get<std::vector<double>>();
       auto inductance =
@@ -240,9 +341,12 @@ nlohmann::json calibrate(const nlohmann::json& config) {
 
   // Run optimization
   DEBUG_MSG("Start optimization");
+  std::cout << "Fixed " << fixed_param_ids.size() << " parameter(s) out of "
+            << param_counter << " total" << std::endl;
   auto lm_alg =
       LevenbergMarquardtOptimizer(&model, num_obs, param_counter, lambda0,
-                                  gradient_tol, increment_tol, max_iter);
+                                  gradient_tol, increment_tol, max_iter,
+                                  fixed_param_ids);
 
   alpha = lm_alg.run(alpha, y_all, dy_all);
 
@@ -250,45 +354,81 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   for (auto& vessel_config : output_config["vessels"]) {
     std::string vessel_name = vessel_config["vessel_name"];
     auto block = model.get_block(vessel_name);
-    double stenosis_coeff = 0.0;
-    if (num_params > 3) {
-      stenosis_coeff = alpha[block->global_param_ids[3]];
+    
+    double r_value, l_value, c_value, stenosis_coeff;
+    
+    if (!calibrate_capacitance && !zero_capacitance) {
+      // BloodVesselFC: params are R(0), L(1), stenosis(2)
+      r_value = alpha[block->global_param_ids[0]];
+      l_value = alpha[block->global_param_ids[1]];
+      c_value = initial_capacitance[vessel_name];
+      stenosis_coeff = calibrate_stenosis ? alpha[block->global_param_ids[2]] : 0.0;
+      
+      // Print l_value for each vessel
+      std::cout << "l_value for " << vessel_name << " is " << l_value << std::endl;
+    } else {
+      // BloodVessel: params are R(0), C(1), L(2), stenosis(3)
+      r_value = alpha[block->global_param_ids[0]];
+      l_value = alpha[block->global_param_ids[2]];
+      stenosis_coeff = (num_params > 3) ? alpha[block->global_param_ids[3]] : 0.0;
+      
+      // Determine capacitance value
+      if (zero_capacitance) {
+        c_value = 0.0;
+      } else {
+        c_value = alpha[block->global_param_ids[1]];
+        // Warn if negative
+        if (c_value < 0.0) {
+          std::cout << "WARNING: Optimized C was " << c_value 
+                    << " for vessel " << vessel_name 
+                    << ". Using absolute value." << std::endl;
+          c_value = std::abs(c_value);
+        }
+      }
+      
+      // Warn if L is negative
+      // if (l_value < 0.0) {
+      //   std::cout << "WARNING: L was " << l_value 
+      //             << " and is being set to zero for vessel " << vessel_name << std::endl;
+      //   l_value = 0.0;
+      // }
     }
-    double c_value = 0.0;
-    if (!zero_capacitance) {
-      c_value = alpha[block->global_param_ids[1]];
-    }
-
-    // if C or L are being set to zero, print a warning
-    if (c_value < 0.0) {
-      std::cout << "WARNING: C was" << c_value << " and is being set to zero for vessel " << vessel_name << std::endl;
-    }
-    if (alpha[block->global_param_ids[2]] < 0.0) {
-      std::cout << "WARNING: L was" << alpha[block->global_param_ids[2]] << " and is being set to zero for vessel " << vessel_name << std::endl;
-    }
+    
     vessel_config["zero_d_element_values"] = {
-        {"R_poiseuille", alpha[block->global_param_ids[0]]},
-        {"C", c_value}, //std::max(c_value, 0.0)},
-        {"L",alpha[block->global_param_ids[2]]}, //std::max(alpha[block->global_param_ids[2]], 0.0)},
+        {"R_poiseuille", r_value},
+        {"C", c_value},
+        {"L", l_value},
         {"stenosis_coefficient", stenosis_coeff}};
   }
   for (auto& junction_config : output_config["junctions"]) {
     std::string junction_name = junction_config["junction_name"];
     auto block = model.get_block(junction_name);
     int num_outlets = block->outlet_nodes.size();
+    
+    // Get junction type from input (preserve it in output)
+    std::string junction_type = junction_config.value("junction_type", "NORMAL_JUNCTION");
 
     if (num_outlets < 2) {
+      // Single outlet junctions stay as-is
+      continue;
+    }
+    
+    // Check if this junction has parameters to calibrate
+    // NORMAL_JUNCTION has no parameters, BloodVesselJunction has parameters
+    if (block->global_param_ids.empty()) {
+      // No parameters - this is a NORMAL_JUNCTION, preserve it
+      // junction_type is already set from input, no junction_values needed
       continue;
     }
 
+    // BloodVesselJunction with calibrated parameters
     std::vector<double> r_values;
     for (size_t i = 0; i < num_outlets; i++) {
       r_values.push_back(alpha[block->global_param_ids[i]]);
     }
     std::vector<double> l_values;
     for (size_t i = 0; i < num_outlets; i++) {
-      l_values.push_back(
-          std::max(alpha[block->global_param_ids[i + num_outlets]], 0.0));
+      l_values.push_back(alpha[block->global_param_ids[i + num_outlets]]);
     }
 
     std::vector<double> ste_values;

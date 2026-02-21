@@ -6,7 +6,7 @@
 
 LevenbergMarquardtOptimizer::LevenbergMarquardtOptimizer(
     Model* model, int num_obs, int num_params, double lambda0, double tol_grad,
-    double tol_inc, int max_iter) {
+    double tol_inc, int max_iter, std::vector<int> fixed_param_ids) {
   this->model = model;
   this->num_obs = num_obs;
   this->num_params = num_params;
@@ -17,6 +17,7 @@ LevenbergMarquardtOptimizer::LevenbergMarquardtOptimizer(
   this->tol_grad = tol_grad;
   this->tol_inc = tol_inc;
   this->max_iter = max_iter;
+  this->fixed_param_ids = fixed_param_ids;
 
   jacobian = Eigen::SparseMatrix<double>(num_dpoints, num_params);
   residual = Eigen::Matrix<double, Eigen::Dynamic, 1>::Zero(num_dpoints);
@@ -76,6 +77,7 @@ void LevenbergMarquardtOptimizer::update_gradient(
       }
     }
   }
+  
 }
 
 void LevenbergMarquardtOptimizer::update_delta(bool first_step) {
@@ -97,4 +99,9 @@ void LevenbergMarquardtOptimizer::update_delta(bool first_step) {
 
   // Solve for new delta
   delta = mat.llt().solve(vec);
+
+  // Zero out deltas for fixed parameters so they never change from initial value
+  for (int pid : fixed_param_ids) {
+    delta[pid] = 0.0;
+  }
 }

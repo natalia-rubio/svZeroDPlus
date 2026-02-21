@@ -13,6 +13,7 @@ Model::Model() {
   // Add all implemented blocks to factory
   block_factory_map = {
       {"BloodVessel", block_factory<BloodVessel>()},
+      {"BloodVesselFC", block_factory<BloodVesselFC>()},
       {"ChamberSphere", block_factory<ChamberSphere>()},
       {"BloodVesselJunction", block_factory<BloodVesselJunction>()},
       {"DirDepJunction", block_factory<DirDepJunction>()},
