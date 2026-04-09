@@ -87,11 +87,23 @@ class LevenbergMarquardtOptimizer {
    * @param tol_inc Parameter increment tolerance
    * @param max_iter Maximum iterations
    * @param fixed_param_ids Parameter indices to keep fixed during optimization
+   * @param l2_penalty_R L2 penalty weight on R_poiseuille (0 = no penalty)
+   * @param l2_penalty_L L2 penalty weight on L (0 = no penalty)
+   * @param l2_penalty_stenosis L2 penalty weight on stenosis_coefficient (0 = no penalty)
+   * @param r_param_ids Global parameter indices for R_poiseuille (for penalty)
+   * @param l_param_ids Global parameter indices for L (for penalty)
+   * @param stenosis_param_ids Global parameter indices for stenosis_coefficient (for penalty)
    */
   LevenbergMarquardtOptimizer(Model* model, int num_obs, int num_params,
                               double lambda0, double tol_grad, double tol_inc,
                               int max_iter,
-                              std::vector<int> fixed_param_ids = {});
+                              std::vector<int> fixed_param_ids = {},
+                              double l2_penalty_R = 0.00,
+                              double l2_penalty_L = 0.00,
+                              double l2_penalty_stenosis = 0.00,
+                              std::vector<int> r_param_ids = {},
+                              std::vector<int> l_param_ids = {},
+                              std::vector<int> stenosis_param_ids = {});
 
   /**
    * @brief Run the optimization algorithm
@@ -127,12 +139,19 @@ class LevenbergMarquardtOptimizer {
   int max_iter;
   
   std::vector<int> fixed_param_ids;  // Parameter indices to keep fixed
+  double l2_penalty_R;
+  double l2_penalty_L;
+  double l2_penalty_stenosis;
+  std::vector<int> r_param_ids;
+  std::vector<int> l_param_ids;
+  std::vector<int> stenosis_param_ids;
 
   void update_gradient(Eigen::Matrix<double, Eigen::Dynamic, 1>& alpha,
                        std::vector<std::vector<double>>& y_obs,
                        std::vector<std::vector<double>>& dy_obs);
 
-  void update_delta(bool first_step);
+  void update_delta(bool first_step,
+                    const Eigen::Matrix<double, Eigen::Dynamic, 1>& alpha);
 };
 
 #endif  // SVZERODSOLVER_OPTIMIZE_LEVENBERGMARQUARDT_HPP_

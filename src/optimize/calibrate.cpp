@@ -26,10 +26,20 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   bool calibrate_capacitance =
       calibration_parameters.value("calibrate_capacitance", false);
   double lambda0 = calibration_parameters.value("initial_damping_factor", 1.0);
-  
+  double l2_penalty_R =
+      calibration_parameters.value("L2_penalty_R_poiseuille", 0.0);
+  double l2_penalty_stenosis =
+      calibration_parameters.value("L2_penalty_stenosis_coefficient", 0.0);
+  double l2_penalty_L =
+      calibration_parameters.value("L2_penalty_L", 0.0);
+
   // Store initial capacitance values (to restore if not calibrating capacitance)
   std::map<std::string, double> initial_capacitance;
   
+  // Print Penalty values
+  std::cout << "L2 penalty on R_poiseuille: weight = " << l2_penalty_R << std::endl;
+  std::cout << "L2 penalty on stenosis_coefficient: weight = " << l2_penalty_stenosis << std::endl;
+  std::cout << "L2 penalty on L: weight = " << l2_penalty_L << std::endl;
   // Print capacitance calibration status
   if (zero_capacitance) {
     std::cout << "Capacitance: Setting all to zero" << std::endl;
@@ -258,6 +268,62 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   }
   DEBUG_MSG("Number of observations: " << num_obs);
 
+  // Build param index lists for L2 penalty on R_poiseuille, L, and stenosis_coefficient
+  std::vector<int> r_poiseuille_param_ids;
+  std::vector<int> l_param_ids;
+  std::vector<int> stenosis_param_ids;
+  if (l2_penalty_R != 0.0 || l2_penalty_L != 0.0 || l2_penalty_stenosis != 0.0) {
+    for (auto& vessel_config : output_config["vessels"]) {
+      std::string vessel_name = vessel_config["vessel_name"];
+      auto block = model.get_block(vessel_name);
+      if (!calibrate_capacitance && !zero_capacitance) {
+        // BloodVesselFC: R(0), L(1), stenosis(2)
+        r_poiseuille_param_ids.push_back(block->global_param_ids[0]);
+        l_param_ids.push_back(block->global_param_ids[1]);
+        if (calibrate_stenosis) {
+          stenosis_param_ids.push_back(block->global_param_ids[2]);
+        }
+      } else {
+        // BloodVessel: R(0), C(1), L(2), stenosis(3)
+        r_poiseuille_param_ids.push_back(block->global_param_ids[0]);
+        l_param_ids.push_back(block->global_param_ids[2]);
+        if (num_params > 3) {
+          stenosis_param_ids.push_back(block->global_param_ids[3]);
+        }
+      }
+    }
+    for (auto& junction_config : output_config["junctions"]) {
+      std::string junction_name = junction_config["junction_name"];
+      auto block = model.get_block(junction_name);
+      int num_outlets = block->outlet_nodes.size();
+      if (num_outlets < 2 || block->global_param_ids.empty()) {
+        continue;
+      }
+      for (int i = 0; i < num_outlets; i++) {
+        r_poiseuille_param_ids.push_back(block->global_param_ids[i]);
+        l_param_ids.push_back(block->global_param_ids[i + num_outlets]);
+        if (num_params > 3) {
+          stenosis_param_ids.push_back(
+              block->global_param_ids[i + 2 * num_outlets]);
+        }
+      }
+    }
+    if (l2_penalty_R != 0.0) {
+      std::cout << "L2 penalty on R_poiseuille: weight = " << l2_penalty_R
+                << " (" << r_poiseuille_param_ids.size() << " params)"
+                << std::endl;
+    }
+    if (l2_penalty_L != 0.0) {
+      std::cout << "L2 penalty on L: weight = " << l2_penalty_L << " ("
+                << l_param_ids.size() << " params)" << std::endl;
+    }
+    if (l2_penalty_stenosis != 0.0) {
+      std::cout << "L2 penalty on stenosis_coefficient: weight = "
+                << l2_penalty_stenosis << " (" << stenosis_param_ids.size()
+                << " params)" << std::endl;
+    }
+  }
+
   // Setup start parameter vector
   Eigen::Matrix<double, Eigen::Dynamic, 1> alpha =
       Eigen::Matrix<double, Eigen::Dynamic, 1>::Zero(param_counter);
@@ -343,10 +409,11 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   DEBUG_MSG("Start optimization");
   std::cout << "Fixed " << fixed_param_ids.size() << " parameter(s) out of "
             << param_counter << " total" << std::endl;
-  auto lm_alg =
-      LevenbergMarquardtOptimizer(&model, num_obs, param_counter, lambda0,
-                                  gradient_tol, increment_tol, max_iter,
-                                  fixed_param_ids);
+  auto lm_alg = LevenbergMarquardtOptimizer(
+      &model, num_obs, param_counter, lambda0, gradient_tol, increment_tol,
+      max_iter, fixed_param_ids, l2_penalty_R, l2_penalty_L,
+      l2_penalty_stenosis, r_poiseuille_param_ids, l_param_ids,
+      stenosis_param_ids);
 
   alpha = lm_alg.run(alpha, y_all, dy_all);
 

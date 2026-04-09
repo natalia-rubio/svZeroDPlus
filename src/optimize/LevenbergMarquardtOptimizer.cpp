@@ -6,7 +6,10 @@
 
 LevenbergMarquardtOptimizer::LevenbergMarquardtOptimizer(
     Model* model, int num_obs, int num_params, double lambda0, double tol_grad,
-    double tol_inc, int max_iter, std::vector<int> fixed_param_ids) {
+    double tol_inc, int max_iter, std::vector<int> fixed_param_ids,
+    double l2_penalty_R, double l2_penalty_L, double l2_penalty_stenosis,
+    std::vector<int> r_param_ids, std::vector<int> l_param_ids,
+    std::vector<int> stenosis_param_ids) {
   this->model = model;
   this->num_obs = num_obs;
   this->num_params = num_params;
@@ -18,6 +21,12 @@ LevenbergMarquardtOptimizer::LevenbergMarquardtOptimizer(
   this->tol_inc = tol_inc;
   this->max_iter = max_iter;
   this->fixed_param_ids = fixed_param_ids;
+  this->l2_penalty_R = l2_penalty_R;
+  this->l2_penalty_L = l2_penalty_L;
+  this->l2_penalty_stenosis = l2_penalty_stenosis;
+  this->r_param_ids = r_param_ids;
+  this->l_param_ids = l_param_ids;
+  this->stenosis_param_ids = stenosis_param_ids;
 
   jacobian = Eigen::SparseMatrix<double>(num_dpoints, num_params);
   residual = Eigen::Matrix<double, Eigen::Dynamic, 1>::Zero(num_dpoints);
@@ -34,9 +43,9 @@ Eigen::Matrix<double, Eigen::Dynamic, 1> LevenbergMarquardtOptimizer::run(
     update_gradient(alpha, y_obs, dy_obs);
 
     if (i == 0) {
-      update_delta(true);
+      update_delta(true, alpha);
     } else {
-      update_delta(false);
+      update_delta(false, alpha);
     }
 
     alpha -= delta;
@@ -80,10 +89,23 @@ void LevenbergMarquardtOptimizer::update_gradient(
   
 }
 
-void LevenbergMarquardtOptimizer::update_delta(bool first_step) {
+void LevenbergMarquardtOptimizer::update_delta(
+    bool first_step,
+    const Eigen::Matrix<double, Eigen::Dynamic, 1>& alpha) {
   // Cache old gradient vector and calulcate new one
   Eigen::Matrix<double, Eigen::Dynamic, 1> vec_old = vec;
   vec = jacobian.transpose() * residual;
+
+  // Add L2 penalty gradient: d/d(alpha) [ (w/2)*alpha^2 ] = w*alpha
+  for (int pid : r_param_ids) {
+    vec[pid] += l2_penalty_R * alpha[pid];
+  }
+  for (int pid : l_param_ids) {
+    vec[pid] += l2_penalty_L * alpha[pid];
+  }
+  for (int pid : stenosis_param_ids) {
+    vec[pid] += l2_penalty_stenosis * alpha[pid];
+  }
 
   // Determine new lambda parameter from new and old gradient vector
   if (!first_step) {
@@ -96,6 +118,17 @@ void LevenbergMarquardtOptimizer::update_delta(bool first_step) {
   Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> jacobian_sq_diag =
       jacobian_sq.diagonal().asDiagonal();
   mat = jacobian_sq + lambda * jacobian_sq_diag;
+
+  // Add L2 penalty Hessian (diagonal): d^2/d(alpha^2) [ (w/2)*alpha^2 ] = w
+  for (int pid : r_param_ids) {
+    mat(pid, pid) += l2_penalty_R;
+  }
+  for (int pid : l_param_ids) {
+    mat(pid, pid) += l2_penalty_L;
+  }
+  for (int pid : stenosis_param_ids) {
+    mat(pid, pid) += l2_penalty_stenosis;
+  }
 
   // Solve for new delta
   delta = mat.llt().solve(vec);
