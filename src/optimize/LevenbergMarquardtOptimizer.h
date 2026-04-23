@@ -9,6 +9,7 @@
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
+#include <vector>
 
 #include "Model.h"
 
@@ -85,10 +86,12 @@ class LevenbergMarquardtOptimizer {
    * @param tol_grad Gradient tolerance
    * @param tol_inc Parameter increment tolerance
    * @param max_iter Maximum iterations
+   * @param fixed_param_ids Global parameter indices kept fixed (delta zeroed)
    */
-  LevenbergMarquardtOptimizer(Model* model, int num_obs, int num_params,
-                              double lambda0, double tol_grad, double tol_inc,
-                              int max_iter);
+  LevenbergMarquardtOptimizer(
+      Model* model, int num_obs, int num_params, double lambda0,
+      double tol_grad, double tol_inc, int max_iter,
+      std::vector<int> fixed_param_ids = {});
 
   /**
    * @brief Run the optimization algorithm
@@ -122,6 +125,8 @@ class LevenbergMarquardtOptimizer {
   double tol_grad;
   double tol_inc;
   int max_iter;
+
+  std::vector<int> fixed_param_ids;
 
   void update_gradient(Eigen::Matrix<double, Eigen::Dynamic, 1>& alpha,
                        std::vector<std::vector<double>>& y_obs,

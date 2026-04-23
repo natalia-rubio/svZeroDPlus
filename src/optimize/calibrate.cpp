@@ -2,8 +2,21 @@
 // University of California, and others. SPDX-License-Identifier: BSD-3-Clause
 #include "calibrate.h"
 
+#include <algorithm>
+
 #include "LevenbergMarquardtOptimizer.h"
 #include "SimulationParameters.h"
+
+namespace {
+
+// Match naming used for Windkessel connector segments (exclude elastance lumped
+// "connectorEL" paths).
+bool vessel_is_non_el_connector(const std::string& vessel_name) {
+  return vessel_name.find("connector") != std::string::npos &&
+         vessel_name.find("connectorEL") == std::string::npos;
+}
+
+}  // namespace
 
 nlohmann::json calibrate(const nlohmann::json& config) {
   auto output_config = nlohmann::json(config);
@@ -20,6 +33,8 @@ nlohmann::json calibrate(const nlohmann::json& config) {
       calibration_parameters.value("calibrate_stenosis_coefficient", true);
   bool zero_capacitance =
       calibration_parameters.value("set_capacitance_to_zero", false);
+  bool freeze_connector_segments =
+      calibration_parameters.value("freeze_connector_segments", true);
   double lambda0 = calibration_parameters.value("initial_damping_factor", 1.0);
 
   int num_params = 3;
@@ -37,13 +52,27 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   DEBUG_MSG("Load vessels");
   std::map<std::int64_t, std::string> vessel_id_map;
   int param_counter = 0;
+  std::vector<int> fixed_param_ids;
   for (auto const& vessel_config : config["vessels"]) {
     std::string vessel_name = vessel_config["vessel_name"];
 
     // Create parameter IDs
     std::vector<int> param_ids;
+    const int vessel_param_start = param_counter;
     for (size_t k = 0; k < num_params; k++)
       param_ids.push_back(param_counter++);
+    if (freeze_connector_segments &&
+        vessel_is_non_el_connector(vessel_name)) {
+      fixed_param_ids.push_back(vessel_param_start);      // R_poiseuille
+      fixed_param_ids.push_back(vessel_param_start + 1);  // C
+      fixed_param_ids.push_back(vessel_param_start + 2);  // L
+      if (num_params > 3) {
+        fixed_param_ids.push_back(vessel_param_start + 3);  // stenosis
+      }
+      DEBUG_MSG("Freeze R,C,L"
+                << (num_params > 3 ? ",stenosis" : "")
+                << " at 0 for connector vessel " << vessel_name);
+    }
     std::string block_type =
         vessel_config["zero_d_element_type"].get<std::string>();
     model.add_block(block_type, param_ids, vessel_name);
@@ -72,10 +101,30 @@ nlohmann::json calibrate(const nlohmann::json& config) {
       model.add_block("NORMAL_JUNCTION", {}, junction_name);
 
     } else {
+      const int junc_param_start = param_counter;
       std::vector<int> param_ids;
       for (size_t i = 0; i < (num_outlets * (num_params - 1)); i++)
         param_ids.push_back(param_counter++);
       model.add_block("BloodVesselJunction", param_ids, junction_name);
+
+      for (int oi = 0; oi < num_outlets; oi++) {
+        std::int64_t ov_id = outlet_vessels[oi].get<std::int64_t>();
+        const std::string& ov_name = vessel_id_map[ov_id];
+        if (freeze_connector_segments &&
+            vessel_is_non_el_connector(ov_name)) {
+          fixed_param_ids.push_back(junc_param_start + oi);  // R
+          fixed_param_ids.push_back(junc_param_start + num_outlets +
+                                    oi);  // L
+          if (num_params > 3) {
+            fixed_param_ids.push_back(junc_param_start + 2 * num_outlets +
+                                      oi);  // stenosis
+          }
+          DEBUG_MSG("Freeze junction " << junction_name
+                                        << " outlet R,L"
+                                        << (num_params > 3 ? ",stenosis" : "")
+                                        << " at 0 for connector " << ov_name);
+        }
+      }
     }
 
     // Check for connections to inlet and outlet vessels and append to
@@ -109,7 +158,11 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   // Finalize model
   model.finalize();
 
-  DEBUG_MSG("Number of parameters " << param_counter);
+  std::sort(fixed_param_ids.begin(), fixed_param_ids.end());
+  fixed_param_ids.erase(std::unique(fixed_param_ids.begin(), fixed_param_ids.end()),
+                        fixed_param_ids.end());
+  DEBUG_MSG("Number of parameters " << param_counter << ", fixed indices "
+                                    << fixed_param_ids.size());
 
   // Read observations
   DEBUG_MSG("Reading observations");
@@ -164,6 +217,15 @@ nlohmann::json calibrate(const nlohmann::json& config) {
           vessel_config["zero_d_element_values"].value("stenosis_coefficient",
                                                        0.0);
     }
+    if (freeze_connector_segments &&
+        vessel_is_non_el_connector(vessel_name)) {
+      alpha[block->global_param_ids[0]] = 0.0;
+      alpha[block->global_param_ids[1]] = 0.0;
+      alpha[block->global_param_ids[2]] = 0.0;
+      if (num_params > 3) {
+        alpha[block->global_param_ids[3]] = 0.0;
+      }
+    }
   }
   for (auto& junction_config : output_config["junctions"]) {
     std::string junction_name = junction_config["junction_name"];
@@ -199,13 +261,27 @@ nlohmann::json calibrate(const nlohmann::json& config) {
         }
       }
     }
+    if (freeze_connector_segments && num_outlets >= 2 &&
+        !block->global_param_ids.empty()) {
+      auto const& ov_arr = junction_config["outlet_vessels"];
+      for (int oi = 0; oi < num_outlets; oi++) {
+        std::int64_t ov_id = ov_arr[oi].get<std::int64_t>();
+        if (vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+          alpha[block->global_param_ids[oi]] = 0.0;
+          alpha[block->global_param_ids[oi + num_outlets]] = 0.0;
+          if (num_params > 3) {
+            alpha[block->global_param_ids[oi + 2 * num_outlets]] = 0.0;
+          }
+        }
+      }
+    }
   }
 
   // Run optimization
   DEBUG_MSG("Start optimization");
-  auto lm_alg =
-      LevenbergMarquardtOptimizer(&model, num_obs, param_counter, lambda0,
-                                  gradient_tol, increment_tol, max_iter);
+  auto lm_alg = LevenbergMarquardtOptimizer(
+      &model, num_obs, param_counter, lambda0, gradient_tol, increment_tol,
+      max_iter, fixed_param_ids);
 
   alpha = lm_alg.run(alpha, y_all, dy_all);
 
@@ -221,10 +297,19 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     if (!zero_capacitance) {
       c_value = alpha[block->global_param_ids[1]];
     }
+    double r_out = alpha[block->global_param_ids[0]];
+    double l_out = std::max(alpha[block->global_param_ids[2]], 0.0);
+    if (freeze_connector_segments &&
+        vessel_is_non_el_connector(vessel_name)) {
+      r_out = 0.0;
+      c_value = 0.0;
+      l_out = 0.0;
+      stenosis_coeff = 0.0;
+    }
     vessel_config["zero_d_element_values"] = {
-        {"R_poiseuille", alpha[block->global_param_ids[0]]},
+        {"R_poiseuille", r_out},
         {"C", std::max(c_value, 0.0)},
-        {"L", std::max(alpha[block->global_param_ids[2]], 0.0)},
+        {"L", l_out},
         {"stenosis_coefficient", stenosis_coeff}};
   }
   for (auto& junction_config : output_config["junctions"]) {
@@ -236,22 +321,41 @@ nlohmann::json calibrate(const nlohmann::json& config) {
       continue;
     }
 
+    auto const& ov_arr_out = junction_config["outlet_vessels"];
     std::vector<double> r_values;
     for (size_t i = 0; i < num_outlets; i++) {
-      r_values.push_back(alpha[block->global_param_ids[i]]);
+      double rv = alpha[block->global_param_ids[i]];
+      std::int64_t ov_id = ov_arr_out[i].get<std::int64_t>();
+      if (freeze_connector_segments &&
+          vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+        rv = 0.0;
+      }
+      r_values.push_back(rv);
     }
     std::vector<double> l_values;
     for (size_t i = 0; i < num_outlets; i++) {
-      l_values.push_back(
-          std::max(alpha[block->global_param_ids[i + num_outlets]], 0.0));
+      double lv =
+          std::max(alpha[block->global_param_ids[i + num_outlets]], 0.0);
+      std::int64_t ov_id = ov_arr_out[i].get<std::int64_t>();
+      if (freeze_connector_segments &&
+          vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+        lv = 0.0;
+      }
+      l_values.push_back(lv);
     }
 
     std::vector<double> ste_values;
 
     if (num_params > 3) {
       for (size_t i = 0; i < num_outlets; i++) {
-        ste_values.push_back(
-            alpha[block->global_param_ids[i + 2 * num_outlets]]);
+        double sv =
+            alpha[block->global_param_ids[i + 2 * num_outlets]];
+        std::int64_t ov_id = ov_arr_out[i].get<std::int64_t>();
+        if (freeze_connector_segments &&
+            vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+          sv = 0.0;
+        }
+        ste_values.push_back(sv);
       }
     } else {
       for (size_t i = 0; i < num_outlets; i++) {

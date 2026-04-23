@@ -6,10 +6,11 @@
 
 LevenbergMarquardtOptimizer::LevenbergMarquardtOptimizer(
     Model* model, int num_obs, int num_params, double lambda0, double tol_grad,
-    double tol_inc, int max_iter) {
+    double tol_inc, int max_iter, std::vector<int> fixed_param_ids) {
   this->model = model;
   this->num_obs = num_obs;
   this->num_params = num_params;
+  this->fixed_param_ids = std::move(fixed_param_ids);
   this->num_eqns = model->dofhandler.get_num_equations();
   this->num_vars = model->dofhandler.get_num_variables();
   this->num_dpoints = this->num_obs * this->num_eqns;
@@ -97,4 +98,8 @@ void LevenbergMarquardtOptimizer::update_delta(bool first_step) {
 
   // Solve for new delta
   delta = mat.llt().solve(vec);
+
+  for (int pid : fixed_param_ids) {
+    delta[pid] = 0.0;
+  }
 }
