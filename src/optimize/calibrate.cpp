@@ -56,27 +56,52 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   for (auto const& vessel_config : config["vessels"]) {
     std::string vessel_name = vessel_config["vessel_name"];
 
-    // Create parameter IDs
-    std::vector<int> param_ids;
-    const int vessel_param_start = param_counter;
-    for (size_t k = 0; k < num_params; k++)
-      param_ids.push_back(param_counter++);
-    if (freeze_connector_segments &&
-        vessel_is_non_el_connector(vessel_name)) {
-      fixed_param_ids.push_back(vessel_param_start);      // R_poiseuille
-      fixed_param_ids.push_back(vessel_param_start + 1);  // C
-      fixed_param_ids.push_back(vessel_param_start + 2);  // L
-      if (num_params > 3) {
-        fixed_param_ids.push_back(vessel_param_start + 3);  // stenosis
-      }
-      DEBUG_MSG("Freeze R,C,L"
-                << (num_params > 3 ? ",stenosis" : "")
-                << " at 0 for connector vessel " << vessel_name);
-    }
     std::string block_type =
         vessel_config["zero_d_element_type"].get<std::string>();
+    const int vessel_param_start = param_counter;
+    std::vector<int> param_ids;
+    if (block_type == "BloodVesselFC") {
+      int n_fc = calibrate_stenosis ? 3 : 2;
+      for (int k = 0; k < n_fc; k++) {
+        param_ids.push_back(param_counter++);
+      }
+    } else {
+      for (size_t k = 0; k < num_params; k++) {
+        param_ids.push_back(param_counter++);
+      }
+    }
+    if (freeze_connector_segments &&
+        vessel_is_non_el_connector(vessel_name)) {
+      if (block_type == "BloodVesselFC") {
+        fixed_param_ids.push_back(vessel_param_start);      // R
+        fixed_param_ids.push_back(vessel_param_start + 1);  // L
+        if (calibrate_stenosis) {
+          fixed_param_ids.push_back(vessel_param_start + 2);  // stenosis
+        }
+      } else {
+        fixed_param_ids.push_back(vessel_param_start);      // R
+        fixed_param_ids.push_back(vessel_param_start + 1);  // C
+        fixed_param_ids.push_back(vessel_param_start + 2);  // L
+        if (num_params > 3) {
+          fixed_param_ids.push_back(vessel_param_start + 3);  // stenosis
+        }
+      }
+      DEBUG_MSG("Freeze connector vessel " << vessel_name << " (" << block_type
+                                            << ")");
+    }
     model.add_block(block_type, param_ids, vessel_name);
     vessel_id_map.insert({vessel_config["vessel_id"], vessel_name});
+    if (block_type == "BloodVesselFC") {
+      double c_val = 0.0;
+      if (freeze_connector_segments &&
+          vessel_is_non_el_connector(vessel_name)) {
+        c_val = 0.0;
+      } else if (!zero_capacitance &&
+                 vessel_config["zero_d_element_values"].contains("C")) {
+        c_val = vessel_config["zero_d_element_values"]["C"].get<double>();
+      }
+      model.fixed_capacitance[vessel_name] = c_val;
+    }
     DEBUG_MSG("Created vessel " << vessel_name);
 
     // Read connected boundary conditions
@@ -206,24 +231,45 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     std::string vessel_name = vessel_config["vessel_name"];
     DEBUG_MSG("Reading initial alpha for " << vessel_name);
     auto block = model.get_block(vessel_name);
-    alpha[block->global_param_ids[0]] =
-        vessel_config["zero_d_element_values"].value("R_poiseuille", 0.0);
-    alpha[block->global_param_ids[1]] =
-        vessel_config["zero_d_element_values"].value("C", 0.0);
-    alpha[block->global_param_ids[2]] =
-        vessel_config["zero_d_element_values"].value("L", 0.0);
-    if (num_params > 3) {
-      alpha[block->global_param_ids[3]] =
-          vessel_config["zero_d_element_values"].value("stenosis_coefficient",
-                                                       0.0);
+    std::string vtype = vessel_config["zero_d_element_type"].get<std::string>();
+    if (vtype == "BloodVesselFC") {
+      alpha[block->global_param_ids[0]] =
+          vessel_config["zero_d_element_values"].value("R_poiseuille", 0.0);
+      alpha[block->global_param_ids[1]] =
+          vessel_config["zero_d_element_values"].value("L", 0.0);
+      if (calibrate_stenosis) {
+        alpha[block->global_param_ids[2]] =
+            vessel_config["zero_d_element_values"].value("stenosis_coefficient",
+                                                         0.0);
+      }
+    } else {
+      alpha[block->global_param_ids[0]] =
+          vessel_config["zero_d_element_values"].value("R_poiseuille", 0.0);
+      alpha[block->global_param_ids[1]] =
+          vessel_config["zero_d_element_values"].value("C", 0.0);
+      alpha[block->global_param_ids[2]] =
+          vessel_config["zero_d_element_values"].value("L", 0.0);
+      if (num_params > 3) {
+        alpha[block->global_param_ids[3]] =
+            vessel_config["zero_d_element_values"].value("stenosis_coefficient",
+                                                         0.0);
+      }
     }
     if (freeze_connector_segments &&
         vessel_is_non_el_connector(vessel_name)) {
-      alpha[block->global_param_ids[0]] = 0.0;
-      alpha[block->global_param_ids[1]] = 0.0;
-      alpha[block->global_param_ids[2]] = 0.0;
-      if (num_params > 3) {
-        alpha[block->global_param_ids[3]] = 0.0;
+      if (vtype == "BloodVesselFC") {
+        alpha[block->global_param_ids[0]] = 0.0;
+        alpha[block->global_param_ids[1]] = 0.0;
+        if (calibrate_stenosis) {
+          alpha[block->global_param_ids[2]] = 0.0;
+        }
+      } else {
+        alpha[block->global_param_ids[0]] = 0.0;
+        alpha[block->global_param_ids[1]] = 0.0;
+        alpha[block->global_param_ids[2]] = 0.0;
+        if (num_params > 3) {
+          alpha[block->global_param_ids[3]] = 0.0;
+        }
       }
     }
   }
@@ -289,28 +335,55 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   for (auto& vessel_config : output_config["vessels"]) {
     std::string vessel_name = vessel_config["vessel_name"];
     auto block = model.get_block(vessel_name);
-    double stenosis_coeff = 0.0;
-    if (num_params > 3) {
-      stenosis_coeff = alpha[block->global_param_ids[3]];
+    std::string vtype = vessel_config["zero_d_element_type"].get<std::string>();
+    const bool freeze_here = freeze_connector_segments &&
+                             vessel_is_non_el_connector(vessel_name);
+
+    if (vtype == "BloodVesselFC") {
+      double c_value = 0.0;
+      if (!zero_capacitance) {
+        c_value = model.fixed_capacitance[vessel_name];
+      }
+      double stenosis_coeff = 0.0;
+      if (calibrate_stenosis) {
+        stenosis_coeff = alpha[block->global_param_ids[2]];
+      }
+      double r_out = alpha[block->global_param_ids[0]];
+      double l_out = std::max(alpha[block->global_param_ids[1]], 0.0);
+      if (freeze_here) {
+        r_out = 0.0;
+        l_out = 0.0;
+        c_value = 0.0;
+        stenosis_coeff = 0.0;
+      }
+      vessel_config["zero_d_element_values"] = {
+          {"R_poiseuille", r_out},
+          {"C", std::max(c_value, 0.0)},
+          {"L", l_out},
+          {"stenosis_coefficient", stenosis_coeff}};
+    } else {
+      double stenosis_coeff = 0.0;
+      if (num_params > 3) {
+        stenosis_coeff = alpha[block->global_param_ids[3]];
+      }
+      double c_value = 0.0;
+      if (!zero_capacitance) {
+        c_value = alpha[block->global_param_ids[1]];
+      }
+      double r_out = alpha[block->global_param_ids[0]];
+      double l_out = std::max(alpha[block->global_param_ids[2]], 0.0);
+      if (freeze_here) {
+        r_out = 0.0;
+        c_value = 0.0;
+        l_out = 0.0;
+        stenosis_coeff = 0.0;
+      }
+      vessel_config["zero_d_element_values"] = {
+          {"R_poiseuille", r_out},
+          {"C", std::max(c_value, 0.0)},
+          {"L", l_out},
+          {"stenosis_coefficient", stenosis_coeff}};
     }
-    double c_value = 0.0;
-    if (!zero_capacitance) {
-      c_value = alpha[block->global_param_ids[1]];
-    }
-    double r_out = alpha[block->global_param_ids[0]];
-    double l_out = std::max(alpha[block->global_param_ids[2]], 0.0);
-    if (freeze_connector_segments &&
-        vessel_is_non_el_connector(vessel_name)) {
-      r_out = 0.0;
-      c_value = 0.0;
-      l_out = 0.0;
-      stenosis_coeff = 0.0;
-    }
-    vessel_config["zero_d_element_values"] = {
-        {"R_poiseuille", r_out},
-        {"C", std::max(c_value, 0.0)},
-        {"L", l_out},
-        {"stenosis_coefficient", stenosis_coeff}};
   }
   for (auto& junction_config : output_config["junctions"]) {
     std::string junction_name = junction_config["junction_name"];
