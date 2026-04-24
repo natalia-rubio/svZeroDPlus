@@ -3,6 +3,11 @@
 #include "calibrate.h"
 
 #include <algorithm>
+#include <cmath>
+#include <iostream>
+#include <set>
+#include <stdexcept>
+#include <utility>
 
 #include "LevenbergMarquardtOptimizer.h"
 #include "SimulationParameters.h"
@@ -14,6 +19,46 @@ namespace {
 bool vessel_is_non_el_connector(const std::string& vessel_name) {
   return vessel_name.find("connector") != std::string::npos &&
          vessel_name.find("connectorEL") == std::string::npos;
+}
+
+/** svZeroD JSON may store ids as float (e.g. 2.0); nlohmann get<int64_t> throws type_error. */
+std::int64_t json_to_int64(const nlohmann::json& j) {
+  if (j.is_number_integer()) {
+    return j.get<std::int64_t>();
+  }
+  if (j.is_number_unsigned()) {
+    return static_cast<std::int64_t>(j.get<std::uint64_t>());
+  }
+  if (j.is_number_float()) {
+    return static_cast<std::int64_t>(std::llround(j.get<double>()));
+  }
+  throw std::runtime_error(std::string("json_to_int64: expected JSON number, got ") +
+                           j.type_name());
+}
+
+int junction_outlet_count(const nlohmann::json& junction_config) {
+  if (junction_config.contains("outlet_blocks") &&
+      junction_config["outlet_blocks"].is_array() &&
+      !junction_config["outlet_blocks"].empty()) {
+    return static_cast<int>(junction_config["outlet_blocks"].size());
+  }
+  const auto& ov =
+      junction_config.value("outlet_vessels", nlohmann::json::array());
+  return static_cast<int>(ov.size());
+}
+
+/** Vessel or downstream junction name for outlet index ``oi`` (block or id topology). */
+std::string outlet_neighbor_name(
+    const nlohmann::json& junction_config, int oi,
+    const std::map<std::int64_t, std::string>& vessel_id_map) {
+  if (junction_config.contains("outlet_blocks") &&
+      junction_config["outlet_blocks"].is_array() &&
+      static_cast<int>(junction_config["outlet_blocks"].size()) > oi) {
+    return junction_config["outlet_blocks"][oi].get<std::string>();
+  }
+  const auto& ov = junction_config.at("outlet_vessels");
+  const std::int64_t ov_id = json_to_int64(ov.at(oi));
+  return vessel_id_map.at(ov_id);
 }
 
 }  // namespace
@@ -36,6 +81,8 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   bool freeze_connector_segments =
       calibration_parameters.value("freeze_connector_segments", true);
   double lambda0 = calibration_parameters.value("initial_damping_factor", 1.0);
+  std::cout << "[calibrate] freeze_connector_segments="
+             << (freeze_connector_segments ? "true" : "false") << std::endl;
 
   int num_params = 3;
   if (calibrate_stenosis) {
@@ -90,7 +137,7 @@ nlohmann::json calibrate(const nlohmann::json& config) {
                                             << ")");
     }
     model.add_block(block_type, param_ids, vessel_name);
-    vessel_id_map.insert({vessel_config["vessel_id"], vessel_name});
+    vessel_id_map.insert({json_to_int64(vessel_config["vessel_id"]), vessel_name});
     if (block_type == "BloodVesselFC") {
       double c_val = 0.0;
       if (freeze_connector_segments &&
@@ -116,11 +163,31 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     }
   }
 
+  for (auto const& vessel_config : config["vessels"]) {
+    std::string vessel_name = vessel_config["vessel_name"];
+    if (vessel_name.find("connector") == std::string::npos) {
+      continue;
+    }
+    if (!freeze_connector_segments) {
+      std::cout << "[calibrate] connector segment \"" << vessel_name
+                << "\": NOT FROZEN (freeze_connector_segments is false)"
+                << std::endl;
+    } else if (vessel_name.find("connectorEL") != std::string::npos) {
+      std::cout << "[calibrate] connector segment \"" << vessel_name
+                << "\": NOT FROZEN (connectorEL is excluded from freeze)"
+                << std::endl;
+    } else {
+      std::cout << "[calibrate] connector segment \"" << vessel_name
+                << "\": FROZEN (R,L,C,stenosis held at 0; junction outlet "
+                   "params fixed when applicable)"
+                << std::endl;
+    }
+  }
+
   // Create junctions
   for (auto const& junction_config : config["junctions"]) {
     std::string junction_name = junction_config["junction_name"];
-    auto const& outlet_vessels = junction_config["outlet_vessels"];
-    int num_outlets = outlet_vessels.size();
+    const int num_outlets = junction_outlet_count(junction_config);
 
     if (num_outlets == 1) {
       model.add_block("NORMAL_JUNCTION", {}, junction_name);
@@ -133,8 +200,8 @@ nlohmann::json calibrate(const nlohmann::json& config) {
       model.add_block("BloodVesselJunction", param_ids, junction_name);
 
       for (int oi = 0; oi < num_outlets; oi++) {
-        std::int64_t ov_id = outlet_vessels[oi].get<std::int64_t>();
-        const std::string& ov_name = vessel_id_map[ov_id];
+        const std::string ov_name =
+            outlet_neighbor_name(junction_config, oi, vessel_id_map);
         if (freeze_connector_segments &&
             vessel_is_non_el_connector(ov_name)) {
           fixed_param_ids.push_back(junc_param_start + oi);  // R
@@ -153,15 +220,53 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     }
 
     // Check for connections to inlet and outlet vessels and append to
-    // connections list
-    for (auto vessel_id : junction_config["inlet_vessels"]) {
-      connections.push_back({vessel_id_map[vessel_id], junction_name});
+    // connections list (supports inlet_blocks / outlet_blocks for cascaded bifurcations).
+    // BloodVesselJunction supports exactly one inlet; use only the first inlet_blocks entry
+    // if the JSON lists more than one (avoids duplicate edges / "multiple inlets" at finalize).
+    if (junction_config.contains("inlet_blocks") &&
+        junction_config["inlet_blocks"].is_array() &&
+        !junction_config["inlet_blocks"].empty()) {
+      const std::string up =
+          junction_config["inlet_blocks"][0].get<std::string>();
+      connections.push_back({up, junction_name});
+    } else {
+      for (auto const& vessel_id :
+           junction_config.value("inlet_vessels", nlohmann::json::array())) {
+        connections.push_back(
+            {vessel_id_map.at(json_to_int64(vessel_id)), junction_name});
+      }
     }
 
-    for (auto vessel_id : outlet_vessels) {
-      connections.push_back({junction_name, vessel_id_map[vessel_id]});
+    if (junction_config.contains("outlet_blocks") &&
+        junction_config["outlet_blocks"].is_array() &&
+        !junction_config["outlet_blocks"].empty()) {
+      for (auto const& oblock : junction_config["outlet_blocks"]) {
+        const std::string dn = oblock.get<std::string>();
+        connections.push_back({junction_name, dn});
+      }
+    } else {
+      for (auto const& vessel_id :
+           junction_config.value("outlet_vessels", nlohmann::json::array())) {
+        connections.push_back(
+            {junction_name, vessel_id_map.at(json_to_int64(vessel_id))});
+      }
     }
     DEBUG_MSG("Created junction " << junction_name);
+  }
+
+  // Drop duplicate directed edges (same upstream -> same downstream) from bad JSON merges.
+  {
+    std::set<std::pair<std::string, std::string>> conn_seen;
+    decltype(connections) conn_deduped;
+    conn_deduped.reserve(connections.size());
+    for (const auto& c : connections) {
+      const auto key =
+          std::make_pair(std::get<0>(c), std::get<1>(c));
+      if (conn_seen.insert(key).second) {
+        conn_deduped.push_back(c);
+      }
+    }
+    connections.swap(conn_deduped);
   }
 
   // Create Connections
@@ -188,6 +293,9 @@ nlohmann::json calibrate(const nlohmann::json& config) {
                         fixed_param_ids.end());
   DEBUG_MSG("Number of parameters " << param_counter << ", fixed indices "
                                     << fixed_param_ids.size());
+  std::cout << "[calibrate] total optimization parameters: " << param_counter
+            << ", fixed parameter indices: " << fixed_param_ids.size()
+            << std::endl;
 
   // Read observations
   DEBUG_MSG("Reading observations");
@@ -309,10 +417,10 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     }
     if (freeze_connector_segments && num_outlets >= 2 &&
         !block->global_param_ids.empty()) {
-      auto const& ov_arr = junction_config["outlet_vessels"];
       for (int oi = 0; oi < num_outlets; oi++) {
-        std::int64_t ov_id = ov_arr[oi].get<std::int64_t>();
-        if (vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+        const std::string ov_name =
+            outlet_neighbor_name(junction_config, oi, vessel_id_map);
+        if (vessel_is_non_el_connector(ov_name)) {
           alpha[block->global_param_ids[oi]] = 0.0;
           alpha[block->global_param_ids[oi + num_outlets]] = 0.0;
           if (num_params > 3) {
@@ -394,24 +502,25 @@ nlohmann::json calibrate(const nlohmann::json& config) {
       continue;
     }
 
-    auto const& ov_arr_out = junction_config["outlet_vessels"];
     std::vector<double> r_values;
-    for (size_t i = 0; i < num_outlets; i++) {
+    for (size_t i = 0; i < static_cast<size_t>(num_outlets); i++) {
       double rv = alpha[block->global_param_ids[i]];
-      std::int64_t ov_id = ov_arr_out[i].get<std::int64_t>();
+      const std::string ov_name =
+          outlet_neighbor_name(junction_config, static_cast<int>(i), vessel_id_map);
       if (freeze_connector_segments &&
-          vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+          vessel_is_non_el_connector(ov_name)) {
         rv = 0.0;
       }
       r_values.push_back(rv);
     }
     std::vector<double> l_values;
-    for (size_t i = 0; i < num_outlets; i++) {
+    for (size_t i = 0; i < static_cast<size_t>(num_outlets); i++) {
       double lv =
           std::max(alpha[block->global_param_ids[i + num_outlets]], 0.0);
-      std::int64_t ov_id = ov_arr_out[i].get<std::int64_t>();
+      const std::string ov_name =
+          outlet_neighbor_name(junction_config, static_cast<int>(i), vessel_id_map);
       if (freeze_connector_segments &&
-          vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+          vessel_is_non_el_connector(ov_name)) {
         lv = 0.0;
       }
       l_values.push_back(lv);
@@ -420,12 +529,13 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     std::vector<double> ste_values;
 
     if (num_params > 3) {
-      for (size_t i = 0; i < num_outlets; i++) {
+      for (size_t i = 0; i < static_cast<size_t>(num_outlets); i++) {
         double sv =
             alpha[block->global_param_ids[i + 2 * num_outlets]];
-        std::int64_t ov_id = ov_arr_out[i].get<std::int64_t>();
+        const std::string ov_name =
+            outlet_neighbor_name(junction_config, static_cast<int>(i), vessel_id_map);
         if (freeze_connector_segments &&
-            vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+            vessel_is_non_el_connector(ov_name)) {
           sv = 0.0;
         }
         ste_values.push_back(sv);
