@@ -2,6 +2,8 @@
 // University of California, and others. SPDX-License-Identifier: BSD-3-Clause
 #include "SimulationParameters.h"
 
+#include <unordered_set>
+
 bool get_param_scalar(const nlohmann::json& data, const std::string& name,
                       const InputParameter& param, double& val) {
   if (data.contains(name)) {
@@ -493,6 +495,18 @@ void create_junctions(
     std::vector<std::tuple<std::string, std::string>>& connections,
     const nlohmann::json& config, const std::string& component,
     std::map<int, std::string>& vessel_id_map) {
+  // --- Junction name index (block connectivity / cascaded bifurcations) ---
+  // Every directed J_child edge must appear on the parent's outlet_blocks as
+  // (J_parent, J_child). The child still lists J_parent in inlet_blocks for
+  // humans and tooling; without skipping here we would add_node twice and the
+  // system can become singular.
+  std::unordered_set<std::string> junction_names;
+  junction_names.reserve(config[component].size());
+  for (size_t j = 0; j < config[component].size(); j++) {
+    JsonWrapper jcfg(config, component, "junction_name", j);
+    junction_names.insert(jcfg["junction_name"].get<std::string>());
+  }
+
   // Loop all junctions
   for (size_t i = 0; i < config[component].size(); i++) {
     const auto& junction_config =
@@ -519,10 +533,19 @@ void create_junctions(
       }
     } else if (junction_config.contains("inlet_blocks") &&
                junction_config.contains("outlet_blocks")) {
-      for (std::string block_name : junction_config["inlet_blocks"]) {
+      // Vessel (or other non-junction) inlets only: emit (upstream, this).
+      // Skip when upstream is a junction name; that J-J link is emitted from
+      // the upstream junction's outlet_blocks below.
+      for (const auto& block_json : junction_config["inlet_blocks"]) {
+        const std::string block_name = block_json.get<std::string>();
+        if (junction_names.count(block_name) != 0) {
+          continue;
+        }
         connections.push_back({block_name, junction_name});
       }
-      for (std::string block_name : junction_config["outlet_blocks"]) {
+      // All outlets (vessels and child junctions): emit (this, downstream).
+      for (const auto& block_json : junction_config["outlet_blocks"]) {
+        const std::string block_name = block_json.get<std::string>();
         connections.push_back({junction_name, block_name});
       }
     }

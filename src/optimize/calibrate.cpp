@@ -3,6 +3,8 @@
 #include "calibrate.h"
 
 #include <algorithm>
+#include <iostream>
+#include <unordered_set>
 
 #include "LevenbergMarquardtOptimizer.h"
 #include "SimulationParameters.h"
@@ -116,50 +118,118 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     }
   }
 
-  // Create junctions
+  // --- Same J-J inlet skip as SimulationParameters::create_junctions ---
+  // If inlet_blocks names another junction, we do not add that edge here; the
+  // parent junction's outlet_blocks already created (J_parent, J_child).
+  std::unordered_set<std::string> junction_names;
+  junction_names.reserve(config["junctions"].size());
+  for (auto const& jc : config["junctions"]) {
+    junction_names.insert(jc["junction_name"].get<std::string>());
+  }
+
+  // Create junctions (legacy vessel ids and/or Phase A block lists)
   for (auto const& junction_config : config["junctions"]) {
     std::string junction_name = junction_config["junction_name"];
-    auto const& outlet_vessels = junction_config["outlet_vessels"];
-    int num_outlets = outlet_vessels.size();
+
+    // Block connectivity: string names for inlets/outlets (vessels or junctions).
+    const bool use_blocks =
+        junction_config.contains("inlet_blocks") &&
+        junction_config.contains("outlet_blocks") &&
+        junction_config["inlet_blocks"].is_array() &&
+        junction_config["outlet_blocks"].is_array();
+    // Legacy: integer vessel ids on the junction object.
+    const bool use_vessel_ids =
+        junction_config.contains("inlet_vessels") &&
+        junction_config.contains("outlet_vessels");
+
+    // Outlet count drives NORMAL_JUNCTION vs BloodVesselJunction; prefer ids if
+    // both representations are present (matches forward-solver JSON rules).
+    int num_outlets = 0;
+    if (use_vessel_ids) {
+      num_outlets = static_cast<int>(junction_config["outlet_vessels"].size());
+    } else if (use_blocks) {
+      num_outlets = static_cast<int>(junction_config["outlet_blocks"].size());
+    }
 
     if (num_outlets == 1) {
       model.add_block("NORMAL_JUNCTION", {}, junction_name);
 
-    } else {
+    } else if (num_outlets > 1) {
       const int junc_param_start = param_counter;
       std::vector<int> param_ids;
       for (size_t i = 0; i < (num_outlets * (num_params - 1)); i++)
         param_ids.push_back(param_counter++);
       model.add_block("BloodVesselJunction", param_ids, junction_name);
 
-      for (int oi = 0; oi < num_outlets; oi++) {
-        std::int64_t ov_id = outlet_vessels[oi].get<std::int64_t>();
-        const std::string& ov_name = vessel_id_map[ov_id];
-        if (freeze_connector_segments &&
-            vessel_is_non_el_connector(ov_name)) {
-          fixed_param_ids.push_back(junc_param_start + oi);  // R
-          fixed_param_ids.push_back(junc_param_start + num_outlets +
-                                    oi);  // L
-          if (num_params > 3) {
-            fixed_param_ids.push_back(junc_param_start + 2 * num_outlets +
-                                      oi);  // stenosis
+      // Optional: pin R,L,(stenosis) for legacy *connector* vessel outlets.
+      if (use_vessel_ids) {
+        for (int oi = 0; oi < num_outlets; oi++) {
+          std::int64_t ov_id =
+              junction_config["outlet_vessels"][oi].get<std::int64_t>();
+          const std::string& ov_name = vessel_id_map[ov_id];
+          if (freeze_connector_segments &&
+              vessel_is_non_el_connector(ov_name)) {
+            fixed_param_ids.push_back(junc_param_start + oi);  // R
+            fixed_param_ids.push_back(junc_param_start + num_outlets +
+                                      oi);  // L
+            if (num_params > 3) {
+              fixed_param_ids.push_back(junc_param_start + 2 * num_outlets +
+                                        oi);  // stenosis
+            }
+            DEBUG_MSG("Freeze junction " << junction_name
+                                          << " outlet R,L"
+                                          << (num_params > 3 ? ",stenosis" : "")
+                                          << " at 0 for connector " << ov_name);
           }
-          DEBUG_MSG("Freeze junction " << junction_name
-                                        << " outlet R,L"
-                                        << (num_params > 3 ? ",stenosis" : "")
-                                        << " at 0 for connector " << ov_name);
+        }
+      }
+      // Same freeze policy using outlet block names (vessel names only match
+      // vessel_is_non_el_connector; junction outlet names are ignored here).
+      else if (use_blocks) {
+        for (int oi = 0; oi < num_outlets; oi++) {
+          const std::string ov_name =
+              junction_config["outlet_blocks"][oi].get<std::string>();
+          if (freeze_connector_segments &&
+              vessel_is_non_el_connector(ov_name)) {
+            fixed_param_ids.push_back(junc_param_start + oi);  // R
+            fixed_param_ids.push_back(junc_param_start + num_outlets +
+                                      oi);  // L
+            if (num_params > 3) {
+              fixed_param_ids.push_back(junc_param_start + 2 * num_outlets +
+                                        oi);  // stenosis
+            }
+            DEBUG_MSG("Freeze junction " << junction_name
+                                          << " outlet R,L"
+                                          << (num_params > 3 ? ",stenosis" : "")
+                                          << " at 0 for connector " << ov_name);
+          }
         }
       }
     }
 
-    // Check for connections to inlet and outlet vessels and append to
-    // connections list
-    for (auto vessel_id : junction_config["inlet_vessels"]) {
-      connections.push_back({vessel_id_map[vessel_id], junction_name});
-    }
-
-    for (auto vessel_id : outlet_vessels) {
-      connections.push_back({junction_name, vessel_id_map[vessel_id]});
+    // Graph edges for this junction (prefer vessel ids when both are present).
+    if (use_vessel_ids) {
+      for (auto vessel_id : junction_config["inlet_vessels"]) {
+        connections.push_back({vessel_id_map[vessel_id], junction_name});
+      }
+      for (auto vessel_id : junction_config["outlet_vessels"]) {
+        connections.push_back({junction_name, vessel_id_map[vessel_id]});
+      }
+    } else if (use_blocks) {
+      // Inlets: vessels (and any non-junction block) only; skip J-J duplicates.
+      for (const auto& iblock : junction_config["inlet_blocks"]) {
+        const std::string up = iblock.get<std::string>();
+        // Skip if inlet_blocks names another junction (parent J_parent, child J_child).
+        if (junction_names.count(up) != 0) {
+          continue;
+        }
+        connections.push_back({up, junction_name});
+      }
+      // Outlets: always emit (this junction, downstream block).
+      for (const auto& oblock : junction_config["outlet_blocks"]) {
+        const std::string dn = oblock.get<std::string>();
+        connections.push_back({junction_name, dn});
+      }
     }
     DEBUG_MSG("Created junction " << junction_name);
   }
@@ -309,10 +379,27 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     }
     if (freeze_connector_segments && num_outlets >= 2 &&
         !block->global_param_ids.empty()) {
-      auto const& ov_arr = junction_config["outlet_vessels"];
+      // Calibration inputs may be legacy id-wired (outlet_vessels) or
+      // block-wired (outlet_blocks, including J-J). Resolve a per-outlet name
+      // from either representation before applying connector freeze logic.
+      // Loop over all outlets and resolve the name from either representation.
       for (int oi = 0; oi < num_outlets; oi++) {
-        std::int64_t ov_id = ov_arr[oi].get<std::int64_t>();
-        if (vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+        std::string ov_name;
+        // If outlet vessel ids are present, resolve the name from the vessel id map.
+        if (junction_config.contains("outlet_vessels") &&
+            junction_config["outlet_vessels"].is_array() &&
+            static_cast<int>(junction_config["outlet_vessels"].size()) > oi) {
+          std::int64_t ov_id =
+              junction_config["outlet_vessels"][oi].get<std::int64_t>();
+          ov_name = vessel_id_map[ov_id];
+        // If outlet block names are present, resolve the name from the outlet block names.
+        } else if (junction_config.contains("outlet_blocks") &&
+                   junction_config["outlet_blocks"].is_array() &&
+                   static_cast<int>(junction_config["outlet_blocks"].size()) >
+                       oi) {
+          ov_name = junction_config["outlet_blocks"][oi].get<std::string>();
+        }
+        if (!ov_name.empty() && vessel_is_non_el_connector(ov_name)) {
           alpha[block->global_param_ids[oi]] = 0.0;
           alpha[block->global_param_ids[oi + num_outlets]] = 0.0;
           if (num_params > 3) {
@@ -324,6 +411,22 @@ nlohmann::json calibrate(const nlohmann::json& config) {
   }
 
   // Run optimization
+  const int num_locations =
+      static_cast<int>(model.dofhandler.get_num_variables());
+  const int num_eq_model = model.dofhandler.get_num_equations();
+  const long long num_residual_rows =
+      static_cast<long long>(num_obs) * static_cast<long long>(num_eq_model);
+  std::cout << "Calibration dimensions: " << num_locations
+            << " observed state variables (y keys / DOFs), "
+            << num_obs << " time step(s), " << num_eq_model
+            << " governing equation(s) per timestep" << std::endl;
+  std::cout << "  Stacked residual length: " << num_residual_rows
+            << " (= time steps × equations); "
+            << "parameters: " << param_counter << std::endl;
+  std::cout << "  Jacobian (sparse, least-squares): " << num_residual_rows
+            << " x " << param_counter << std::endl;
+  std::cout << "  Normal-system matrix (dense LLT each iteration): "
+            << param_counter << " x " << param_counter << std::endl;
   DEBUG_MSG("Start optimization");
   auto lm_alg = LevenbergMarquardtOptimizer(
       &model, num_obs, param_counter, lambda0, gradient_tol, increment_tol,
@@ -394,13 +497,31 @@ nlohmann::json calibrate(const nlohmann::json& config) {
       continue;
     }
 
-    auto const& ov_arr_out = junction_config["outlet_vessels"];
+    // Map optimizer outlet index -> output JSON outlet name for both
+    // outlet_vessels (ids) and outlet_blocks (names). This keeps
+    // freeze_connector_segments behavior consistent for block connectivity.
+    auto outlet_name_at = [&](size_t oi) -> std::string {
+      if (junction_config.contains("outlet_vessels") &&
+          junction_config["outlet_vessels"].is_array() &&
+          junction_config["outlet_vessels"].size() > oi) {
+        std::int64_t ov_id =
+            junction_config["outlet_vessels"][oi].get<std::int64_t>();
+        return vessel_id_map[ov_id];
+      }
+      if (junction_config.contains("outlet_blocks") &&
+          junction_config["outlet_blocks"].is_array() &&
+          junction_config["outlet_blocks"].size() > oi) {
+        return junction_config["outlet_blocks"][oi].get<std::string>();
+      }
+      return std::string();
+    };
     std::vector<double> r_values;
     for (size_t i = 0; i < num_outlets; i++) {
       double rv = alpha[block->global_param_ids[i]];
-      std::int64_t ov_id = ov_arr_out[i].get<std::int64_t>();
+      const std::string ov_name = outlet_name_at(i);
       if (freeze_connector_segments &&
-          vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+          !ov_name.empty() &&
+          vessel_is_non_el_connector(ov_name)) {
         rv = 0.0;
       }
       r_values.push_back(rv);
@@ -409,9 +530,10 @@ nlohmann::json calibrate(const nlohmann::json& config) {
     for (size_t i = 0; i < num_outlets; i++) {
       double lv =
           std::max(alpha[block->global_param_ids[i + num_outlets]], 0.0);
-      std::int64_t ov_id = ov_arr_out[i].get<std::int64_t>();
+      const std::string ov_name = outlet_name_at(i);
       if (freeze_connector_segments &&
-          vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+          !ov_name.empty() &&
+          vessel_is_non_el_connector(ov_name)) {
         lv = 0.0;
       }
       l_values.push_back(lv);
@@ -423,9 +545,10 @@ nlohmann::json calibrate(const nlohmann::json& config) {
       for (size_t i = 0; i < num_outlets; i++) {
         double sv =
             alpha[block->global_param_ids[i + 2 * num_outlets]];
-        std::int64_t ov_id = ov_arr_out[i].get<std::int64_t>();
+        const std::string ov_name = outlet_name_at(i);
         if (freeze_connector_segments &&
-            vessel_is_non_el_connector(vessel_id_map[ov_id])) {
+            !ov_name.empty() &&
+            vessel_is_non_el_connector(ov_name)) {
           sv = 0.0;
         }
         ste_values.push_back(sv);
