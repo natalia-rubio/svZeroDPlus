@@ -63,7 +63,11 @@ def calibrate(arg0: dict) -> dict:
     """Run a Levenberg-Marquardt calibration.
 
     Args:
-        arg0: Calibration configuration dictionary.
+        arg0: Calibration configuration dictionary. If
+            ``calibration_parameters.residual_csv`` is a non-empty string path,
+            after optimization the stacked residual ``r = E·ẏ + F·y + c`` is
+            written as CSV (columns ``equation``, ``residual``) with one row per
+            (time sample × governing equation).
 
     Returns:
         Calibrated 0D solver input file.

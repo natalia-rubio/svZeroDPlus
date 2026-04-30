@@ -58,6 +58,13 @@ Eigen::Matrix<double, Eigen::Dynamic, 1> LevenbergMarquardtOptimizer::run(
   return alpha;
 }
 
+void LevenbergMarquardtOptimizer::evaluate_residual_stack(
+    Eigen::Matrix<double, Eigen::Dynamic, 1>& alpha,
+    std::vector<std::vector<double>>& y_obs,
+    std::vector<std::vector<double>>& dy_obs) {
+  update_gradient(alpha, y_obs, dy_obs);
+}
+
 void LevenbergMarquardtOptimizer::update_gradient(
     Eigen::Matrix<double, Eigen::Dynamic, 1>& alpha,
     std::vector<std::vector<double>>& y_obs,

@@ -3,7 +3,10 @@
 #include "calibrate.h"
 
 #include <algorithm>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <string>
 #include <unordered_set>
 
 #include "LevenbergMarquardtOptimizer.h"
@@ -16,6 +19,23 @@ namespace {
 bool vessel_is_non_el_connector(const std::string& vessel_name) {
   return vessel_name.find("connector") != std::string::npos &&
          vessel_name.find("connectorEL") == std::string::npos;
+}
+
+// CSV field quoting when the equation label contains comma, quote, or newline.
+std::string csv_escape_field(const std::string& s) {
+  if (s.find_first_of(",\"\n\r") == std::string::npos) {
+    return s;
+  }
+  std::string out = "\"";
+  for (char c : s) {
+    if (c == '"') {
+      out += "\"\"";
+    } else {
+      out += c;
+    }
+  }
+  out += '"';
+  return out;
 }
 
 }  // namespace
@@ -433,6 +453,43 @@ nlohmann::json calibrate(const nlohmann::json& config) {
       max_iter, fixed_param_ids);
 
   alpha = lm_alg.run(alpha, y_all, dy_all);
+
+  // Optional: stacked governing-equation residual r = E·ẏ + F·y + c at final α
+  // (same ordering as LM). Set calibration_parameters.residual_csv to a path.
+  std::string residual_csv =
+      calibration_parameters.value("residual_csv", std::string(""));
+  if (!residual_csv.empty()) {
+    lm_alg.evaluate_residual_stack(alpha, y_all, dy_all);
+    const Eigen::Matrix<double, Eigen::Dynamic, 1>& r = lm_alg.get_residual();
+    const int ne = num_eq_model;
+    if (static_cast<int>(model.dofhandler.equations.size()) != ne) {
+      std::cerr << "[calibrate] Warning: dofhandler.equations.size() ("
+                << model.dofhandler.equations.size()
+                << ") != num_eq_model (" << ne << "); CSV labels may be wrong.\n";
+    }
+    std::ofstream csv_out(residual_csv);
+    if (!csv_out.is_open()) {
+      std::cerr << "[calibrate] Warning: could not open residual_csv '"
+                << residual_csv << "' for writing; skipping.\n";
+    } else {
+      csv_out << "equation,residual\n";
+      csv_out << std::scientific << std::setprecision(17);
+      for (long long k = 0; k < r.size(); ++k) {
+        const int tidx = static_cast<int>(k / ne);
+        const int eq = static_cast<int>(k % ne);
+        std::string base =
+            (eq >= 0 && eq < static_cast<int>(model.dofhandler.equations.size()))
+                ? model.dofhandler.equations[static_cast<size_t>(eq)]
+                : std::string("unknown_eq");
+        // Names include block + equation tag (e.g. vessel:flow) from Block::setup_dofs_
+        std::string label =
+            (num_obs > 1) ? ("t" + std::to_string(tidx) + "_" + base) : base;
+        csv_out << csv_escape_field(label) << ',' << r(k) << '\n';
+      }
+      std::cout << "[calibrate] Wrote stacked residual (" << r.size()
+                << " rows) to " << residual_csv << std::endl;
+    }
+  }
 
   // Write optimized simulation config file
   for (auto& vessel_config : output_config["vessels"]) {

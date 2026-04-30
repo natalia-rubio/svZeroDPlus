@@ -5,6 +5,8 @@
 
 #include "Model.h"
 
+#include <string>
+
 std::string Block::get_name() { return this->model->get_block_name(this->id); }
 
 void Block::update_vessel_type(VesselType type) { vessel_type = type; }
@@ -16,7 +18,8 @@ void Block::setup_params_(const std::vector<int>& param_ids) {
 }
 
 void Block::setup_dofs_(DOFHandler& dofhandler, int num_equations,
-                        const std::list<std::string>& internal_var_names) {
+                        const std::list<std::string>& internal_var_names,
+                        const std::vector<std::string>& equation_tags) {
   // Collect external DOFs from inlet nodes
   for (auto& inlet_node : inlet_nodes) {
     global_var_ids.push_back(inlet_node->pres_dof);
@@ -35,9 +38,14 @@ void Block::setup_dofs_(DOFHandler& dofhandler, int num_equations,
         dofhandler.register_variable(int_name + ":" + this->get_name()));
   }
 
-  // Register equations of block
+  // Register equations of block (unique names for diagnostics / calibration CSV)
+  const bool use_tags = (static_cast<size_t>(num_equations) == equation_tags.size() &&
+                         !equation_tags.empty());
   for (int i = 0; i < num_equations; i++) {
-    global_eqn_ids.push_back(dofhandler.register_equation(get_name()));
+    std::string eq_label =
+        use_tags ? (get_name() + ":" + equation_tags[static_cast<size_t>(i)])
+                 : (get_name() + ":eq_" + std::to_string(i));
+    global_eqn_ids.push_back(dofhandler.register_equation(eq_label));
   }
 }
 

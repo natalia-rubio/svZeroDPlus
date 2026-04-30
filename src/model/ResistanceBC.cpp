@@ -3,7 +3,7 @@
 #include "ResistanceBC.h"
 
 void ResistanceBC::setup_dofs(DOFHandler& dofhandler) {
-  Block::setup_dofs_(dofhandler, 1, {});
+  Block::setup_dofs_(dofhandler, 1, {}, {"pressure_flow"});
 }
 
 void ResistanceBC::update_constant(SparseSystem& system,

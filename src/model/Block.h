@@ -182,8 +182,13 @@ class Block {
    * @param internal_var_names Number of internal variables of the block
    */
 
+  /**
+   * @param equation_tags Optional short labels (e.g. "flow", "pressure") joined
+   *        as get_name() + ":" + tag. If empty or wrong size, uses :eq_0, :eq_1, ...
+   */
   void setup_dofs_(DOFHandler& dofhandler, int num_equations,
-                   const std::list<std::string>& internal_var_names);
+                   const std::list<std::string>& internal_var_names,
+                   const std::vector<std::string>& equation_tags = {});
 
   /**
    * @brief Set up the degrees of freedom (DOF) of the block

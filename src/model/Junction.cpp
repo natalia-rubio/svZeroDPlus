@@ -2,12 +2,22 @@
 // University of California, and others. SPDX-License-Identifier: BSD-3-Clause
 #include "Junction.h"
 
+#include <string>
+#include <vector>
+
 void Junction::setup_dofs(DOFHandler& dofhandler) {
   // Set number of equations of a junction block based on number of
   // inlets/outlets. Must be set before calling parent constructor
   num_inlets = inlet_nodes.size();
   num_outlets = outlet_nodes.size();
-  Block::setup_dofs_(dofhandler, num_inlets + num_outlets, {});
+  const int ne = num_inlets + num_outlets;
+  std::vector<std::string> eq_tags;
+  eq_tags.reserve(static_cast<size_t>(ne));
+  for (int i = 0; i < ne - 1; ++i) {
+    eq_tags.push_back("pressure_continuity_" + std::to_string(i));
+  }
+  eq_tags.push_back("mass_conservation");
+  Block::setup_dofs_(dofhandler, ne, {}, eq_tags);
   num_triplets.F =
       (num_inlets + num_outlets - 1) * 2 + num_inlets + num_outlets;
 }

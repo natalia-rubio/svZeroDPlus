@@ -3,7 +3,7 @@
 #include "PressureReferenceBC.h"
 
 void PressureReferenceBC::setup_dofs(DOFHandler& dofhandler) {
-  Block::setup_dofs_(dofhandler, 1, {});
+  Block::setup_dofs_(dofhandler, 1, {}, {"pressure"});
 }
 
 void PressureReferenceBC::update_constant(SparseSystem& system,

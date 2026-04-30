@@ -6,7 +6,7 @@
 void PiecewiseValve::setup_dofs(DOFHandler& dofhandler) {
   // set_up_dofs args: dofhandler (passed in), num equations, list of internal
   // variable names (strings) 2 eqns, one for Pressure, one for Flow
-  Block::setup_dofs_(dofhandler, 2, {});
+  Block::setup_dofs_(dofhandler, 2, {}, {"pressure", "flow"});
 }
 
 // update_constant updates matrices E and F from E(y,t)*y_dot + F(y,t)*y +

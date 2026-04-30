@@ -107,6 +107,20 @@ class LevenbergMarquardtOptimizer {
       std::vector<std::vector<double>>& y_obs,
       std::vector<std::vector<double>>& dy_obs);
 
+  /**
+   * @brief Recompute stacked residual r = E·ẏ + F·y + c at given alpha (same
+   * layout as during LM: length num_obs × num_equations, row-major by timestep).
+   * Also refreshes the Jacobian (caller may ignore).
+   */
+  void evaluate_residual_stack(
+      Eigen::Matrix<double, Eigen::Dynamic, 1>& alpha,
+      std::vector<std::vector<double>>& y_obs,
+      std::vector<std::vector<double>>& dy_obs);
+
+  const Eigen::Matrix<double, Eigen::Dynamic, 1>& get_residual() const {
+    return residual;
+  }
+
  private:
   Eigen::SparseMatrix<double> jacobian;
   Eigen::Matrix<double, Eigen::Dynamic, 1> residual;

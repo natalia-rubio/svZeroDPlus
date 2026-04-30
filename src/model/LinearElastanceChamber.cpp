@@ -5,7 +5,8 @@
 
 void LinearElastanceChamber::setup_dofs(DOFHandler& dofhandler) {
   // Internal variable is chamber volume
-  Block::setup_dofs_(dofhandler, 3, {"Vc"});
+  Block::setup_dofs_(dofhandler, 3, {"Vc"},
+                     {"pressure_elastance", "pressure_interface", "mass_balance"});
 }
 
 void LinearElastanceChamber::update_constant(SparseSystem& system,

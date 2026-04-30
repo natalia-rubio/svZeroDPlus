@@ -5,7 +5,7 @@
 #include "Model.h"
 
 void ClosedLoopCoronaryBC::setup_dofs(DOFHandler& dofhandler) {
-  Block::setup_dofs_(dofhandler, 3, {"volume_im"});
+  Block::setup_dofs_(dofhandler, 3, {"volume_im"}, {"flow", "pressure", "volume"});
 }
 
 void ClosedLoopCoronaryBC::update_constant(SparseSystem& system,

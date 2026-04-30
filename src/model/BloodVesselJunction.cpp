@@ -3,6 +3,9 @@
 
 #include "BloodVesselJunction.h"
 
+#include <string>
+#include <vector>
+
 void BloodVesselJunction::setup_dofs(DOFHandler& dofhandler) {
   if (inlet_nodes.size() != 1) {
     throw std::runtime_error(
@@ -10,7 +13,13 @@ void BloodVesselJunction::setup_dofs(DOFHandler& dofhandler) {
   }
 
   num_outlets = outlet_nodes.size();
-  Block::setup_dofs_(dofhandler, num_outlets + 1, {});
+  std::vector<std::string> eq_tags;
+  eq_tags.reserve(num_outlets + 1);
+  eq_tags.push_back("mass_conservation");
+  for (size_t i = 0; i < num_outlets; ++i) {
+    eq_tags.push_back("outlet_" + std::to_string(i) + "_pressure_flow");
+  }
+  Block::setup_dofs_(dofhandler, num_outlets + 1, {}, eq_tags);
   num_triplets.F = 1 + 4 * num_outlets;
   num_triplets.E = 3 * num_outlets;
   num_triplets.D = 2 * num_outlets;

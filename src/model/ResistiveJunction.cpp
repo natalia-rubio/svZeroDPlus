@@ -2,12 +2,25 @@
 // University of California, and others. SPDX-License-Identifier: BSD-3-Clause
 #include "ResistiveJunction.h"
 
+#include <string>
+#include <vector>
+
 void ResistiveJunction::setup_dofs(DOFHandler& dofhandler) {
   // Set number of equations of a junction block based on number of
   // inlets/outlets. Must be set before calling parent constructor
   num_inlets = inlet_nodes.size();
   num_outlets = outlet_nodes.size();
-  Block::setup_dofs_(dofhandler, num_inlets + num_outlets + 1, {"pressure_c"});
+  std::vector<std::string> eq_tags;
+  eq_tags.reserve(num_inlets + num_outlets + 1);
+  for (int i = 0; i < num_inlets; ++i) {
+    eq_tags.push_back("inlet_" + std::to_string(i) + "_pressure_drop");
+  }
+  for (int i = 0; i < num_outlets; ++i) {
+    eq_tags.push_back("outlet_" + std::to_string(i) + "_pressure_drop");
+  }
+  eq_tags.push_back("mass_conservation");
+  Block::setup_dofs_(dofhandler, num_inlets + num_outlets + 1, {"pressure_c"},
+                     eq_tags);
   num_triplets.F = (num_inlets + num_outlets) * 4;
 }
 

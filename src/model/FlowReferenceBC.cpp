@@ -3,7 +3,7 @@
 #include "FlowReferenceBC.h"
 
 void FlowReferenceBC::setup_dofs(DOFHandler& dofhandler) {
-  Block::setup_dofs_(dofhandler, 1, {});
+  Block::setup_dofs_(dofhandler, 1, {}, {"flow"});
 }
 
 void FlowReferenceBC::update_constant(SparseSystem& system,

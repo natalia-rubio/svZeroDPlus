@@ -4,7 +4,7 @@
 #include "BloodVessel.h"
 
 void BloodVessel::setup_dofs(DOFHandler& dofhandler) {
-  Block::setup_dofs_(dofhandler, 2, {});
+  Block::setup_dofs_(dofhandler, 2, {}, {"flow", "pressure"});
 }
 
 void BloodVessel::update_constant(SparseSystem& system,

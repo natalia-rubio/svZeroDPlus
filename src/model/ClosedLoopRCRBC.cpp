@@ -3,7 +3,8 @@
 #include "ClosedLoopRCRBC.h"
 
 void ClosedLoopRCRBC::setup_dofs(DOFHandler& dofhandler) {
-  Block::setup_dofs_(dofhandler, 3, {"P_c"});
+  Block::setup_dofs_(dofhandler, 3, {"P_c"},
+                     {"proximal_flow", "distal_pressure", "distal_flow"});
 }
 
 void ClosedLoopRCRBC::update_constant(SparseSystem& system,

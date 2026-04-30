@@ -6,7 +6,8 @@ void ValveTanh::setup_dofs(DOFHandler& dofhandler) {
   // set_up_dofs args: dofhandler (passed in), num equations, list of internal
   // variable names (strings) 3 eqns, one for Pressure, one for Flow, one for
   // the valve status output
-  Block::setup_dofs_(dofhandler, 3, {"valve_status"});
+  Block::setup_dofs_(dofhandler, 3, {"valve_status"},
+                     {"pressure", "flow", "valve_state"});
 }
 
 // update_constant updates matrices E and F from E(y,t)*y_dot + F(y,t)*y +

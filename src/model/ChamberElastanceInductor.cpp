@@ -4,7 +4,8 @@
 
 void ChamberElastanceInductor::setup_dofs(DOFHandler& dofhandler) {
   // Internal variable is chamber volume
-  Block::setup_dofs_(dofhandler, 3, {"Vc"});
+  Block::setup_dofs_(dofhandler, 3, {"Vc"},
+                     {"pressure_elastance", "pressure_inductor", "mass_balance"});
 }
 
 void ChamberElastanceInductor::update_constant(

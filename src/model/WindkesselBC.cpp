@@ -3,7 +3,8 @@
 #include "WindkesselBC.h"
 
 void WindkesselBC::setup_dofs(DOFHandler& dofhandler) {
-  Block::setup_dofs_(dofhandler, 2, {"pressure_c"});
+  Block::setup_dofs_(dofhandler, 2, {"pressure_c"},
+                     {"pressure_interface", "windkessel_storage"});
 }
 
 void WindkesselBC::update_constant(SparseSystem& system,
